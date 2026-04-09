@@ -1,0 +1,67 @@
+*****************************************************************************************************************
+I am building a toolkit for vectorising different features from historic cadastral maps. it combines different binary segementation models that need different conda environments to run, and has several different steps. Because of dependency needs, I am running the whole thing in WSL. The whole pipeline is for making a geopackage of vector layers for different map features made through binary map 
+
+map into a . These steps include:
+1. taking a full map document (georeferenced geotiff) and patchifying it into 1024px patches. Patchify full document unless the user inputs a binary mask that delinates map area within document in which case only make patches with the mask area (this will need a system for stitching these back together into a full map so that the patches go in the right place within the full doucment image). Most map images will be georeferenced, but non-georeferenced images should work too.
+2. A method for annotating a few select patches with labelme and fine-tuning the model weights for each feature with them. 
+3. one script for running each feature model prediction on the patches. I am using MapSAM for any features that turn into polygons (e.g. individual binary segmentation for water features, house footprints, areas of document damage), the MapTextPipeline from the MapReader library for text recognition, and an adapted U-Net model specifically for linear feature recognition for land parcel boundary recognition.the user can select which of the optional features are vectorised and made into the final geopackage.
+4. Predictions are stiched together in binary masks of same dimension and spatial projection as origional input image. Each feature prediction is then turned into vector equivilent. For boundary lines this is polylines, anything from MapSAM turns into polygons, and text predictions are also polygons but with content incorperated as a attribute. These vector equivilents are slightly simplified so they can be more easily edited afterwards. A geopackage is output with each feature as its own layer.
+5. The user can then open these vector equivilents in a gis to mend and fix. If the user is going to run a new map sheet these edited vector predictions can be used to fine-tune the models again for better results in next model run (the vector layers will need to be made back into binary raster masks, patchified, and then a subset can be used in the fine-tuning).
+
+I previously asked claude to make a rough outline based on a prompt with less information for what this python toolkit would look like and it suggested a file structure like this:
+```
+map-toolbox/
+│
+├── config.yaml                  # Single source of truth for all paths & parameters
+│
+├── data/
+│   ├── raw/                     # Original map sheets (.tif)
+│   ├── patches/                 # Patchified images + metadata CSVs
+│   ├── annotations/             # Training masks (per model type)
+│   │   ├── text/
+│   │   ├── symbology/
+│   │   └── line_features/
+│   ├── predictions/             # Raw model outputs
+│   │   ├── maptext/
+│   │   ├── mapsam/
+│   │   └── unet/
+│   └── results/                 # Merged, post-processed, visualised outputs
+│
+├── steps/                       # One folder per pipeline stage
+│   ├── 01_patchify/             # env: New-MapReader
+│   ├── 02_annotate/             # env: any (label-studio, QGIS, etc.)
+│   ├── 03_text_detection/       # env: New-MapReader
+│   ├── 04_symbol_detection/     # env: MapSAM
+│   ├── 05_line_detection/       # env: tf-gpu
+│   ├── 06_postprocess/          # env: any lightweight
+│   └── 07_visualise/            # env: any lightweight
+│
+├── notebooks/                   # Interactive exploration, one per env
+│   ├── new_mapreader.ipynb
+│   ├── mapsam.ipynb
+│   └── unet.ipynb
+│
+├── envs/                        # Environment definitions for reproducibility
+│   ├── new_mapreader.yml
+│   ├── mapsam.yml
+│   └── tf_gpu.yml
+│
+├── pipeline.sh                  # Full pipeline orchestrator
+└── README.md
+```
+
+Can you re-evaluate the needs of the project and update the project structure. 
+
+*****************************************************************************************************************
+I have been using MapSAM to train models for recognising certain features across different historic maps. I am using the train.py script to run thought the designed fine-tuning process which takes about 2 hours on my hardware. The problem is I do not see a good way of building on this new model weight that is made. I want to be able to make new training data and further fine tune my weights for a given feature without having to run the fill pre-designed train.py script. can you think of a logical solution for this problem?
+
+
+
+
+
+
+
+
+
+
+
