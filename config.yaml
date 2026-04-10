@@ -1,5 +1,47 @@
 paths:
   raw: data/raw/
+  masks: data/map_area_masks/
   patches: data/patches/
+  annotations: data/annotations/
+  predictions: data/predictions/
+  stitched: data/stitched/
+  outputs: data/outputs/
+  models_base: models/base/
+  models_finetuned: models/finetuned/
 
+patchify:
+  patch_size: 1024        # px — consistent across all models
+  overlap: 0              # px between adjacent patches
+  min_mask_coverage: 0.01 # fraction of patch that must fall within mask (0.01 = 1%)
+  pad_value: 255          # fill value for edge patches (255 = white)
 
+unet:
+  inference_size: 256     # model input size; 1024px patches are split into a 4×4 grid of
+                          # 256px tiles (16 total) — matches training resolution exactly, no downsampling
+  image_channels: 1       # grayscale
+  loss_type: combined_focal_cldice
+  threshold: 0.95         # from threshold calibration on validation set
+  batch_size: 4
+
+features:
+  boundaries: true   # U-Net: land parcel boundary lines
+  buildings: true    # MapSAM: building footprints
+  water: true        # MapSAM: water features
+  damage: false      # MapSAM: document damage areas
+  text: true         # MapTextPipeline: text regions
+
+annotation:
+  # Labels the user types in labelme for each feature class.
+  # Anything not in this list is treated as a text annotation (label = the text content).
+  feature_labels:
+    - boundary
+    - water
+    - building
+    - damage
+  # Maps each label to its annotations subfolder
+  label_to_folder:
+    boundary: boundaries
+    water: water
+    building: buildings
+    damage: damage
+  line_width: 3       # px width used when rendering linestrip annotations into masks
