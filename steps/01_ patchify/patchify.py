@@ -1,5 +1,5 @@
 """
-Slice a georeferenced map sheet into 1024px PNG patches.
+Slice a georeferenced map sheet into 512px PNG patches.
 
 With --mask, only patches that overlap the map-area mask by at least
 min_mask_coverage (config.yaml) are saved. All spatial metadata needed
@@ -169,7 +169,7 @@ def patchify(sheet_id: str, use_mask: bool, repo_root: Path):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Patchify a map sheet into 1024px PNG tiles.")
+    parser = argparse.ArgumentParser(description="Patchify a map sheet into 512px PNG tiles.")
     parser.add_argument("--sheet", required=True, help="Sheet ID (subfolder name under data/raw/)")
     parser.add_argument("--mask", action="store_true", help="Skip patches outside the map-area mask")
     args = parser.parse_args()

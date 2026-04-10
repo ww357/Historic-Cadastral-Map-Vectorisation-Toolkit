@@ -10,14 +10,15 @@ paths:
   models_finetuned: models/finetuned/
 
 patchify:
-  patch_size: 1024        # px — consistent across all models
+  patch_size: 512         # px — boundaries/MapSAM use 512px patches directly;
+                          # text model stitches 2×2 patches to 1024px before inference
   overlap: 0              # px between adjacent patches
   min_mask_coverage: 0.01 # fraction of patch that must fall within mask (0.01 = 1%)
   pad_value: 255          # fill value for edge patches (255 = white)
 
 unet:
-  inference_size: 256     # model input size; 1024px patches are split into a 4×4 grid of
-                          # 256px tiles (16 total) — matches training resolution exactly, no downsampling
+  inference_size: 256     # model input size; 512px patches are split into a 2×2 grid of
+                          # 256px tiles (4 total) — matches training resolution exactly, no downsampling
   image_channels: 1       # grayscale
   loss_type: combined_focal_cldice
   threshold: 0.95         # from threshold calibration on validation set
@@ -29,6 +30,16 @@ features:
   water: true        # MapSAM: water features
   damage: false      # MapSAM: document damage areas
   text: true         # MapTextPipeline: text regions
+
+vectorise:
+  boundaries:
+    simplify_tolerance: 2.0  # Douglas-Peucker tolerance in CRS units (metres for BNG,
+                             # pixels for non-georef). Increase to generalise more.
+    min_length: 10.0         # discard lines shorter than this (same units as above)
+  # Future feature sections follow the same pattern, e.g.:
+  # buildings:
+  #   simplify_tolerance: 1.0
+  #   min_area: 5.0
 
 annotation:
   # Labels the user types in labelme for each feature class.

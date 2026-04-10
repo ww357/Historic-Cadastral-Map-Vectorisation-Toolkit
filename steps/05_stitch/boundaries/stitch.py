@@ -2,12 +2,12 @@
 Stitch boundary prediction masks into a full-document binary GeoTIFF.
 
 Reads  : data/patches/metadata/<SHEET_ID>_patches.csv   — patch offsets + georef
-         data/predictions/boundaries/<SHEET_ID>/*.png   — 1024px binary masks
+         data/predictions/boundaries/<SHEET_ID>/*.png   — 512px binary masks
          data/raw/<SHEET_ID>/<SHEET_ID>.tif             — source of true dimensions + CRS
 
 Writes : data/stitched/boundaries/<SHEET_ID>.tif        — full-document uint8 GeoTIFF
 
-Each prediction PNG is 1024px but edge patches may have a smaller valid region
+Each prediction PNG is 512px but edge patches may have a smaller valid region
 (patch_w × patch_h from the metadata). Only the valid region is placed onto the
 canvas; the white-padded remainder is discarded.
 

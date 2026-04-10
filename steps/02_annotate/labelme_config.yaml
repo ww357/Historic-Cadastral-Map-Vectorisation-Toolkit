@@ -1,0 +1,21 @@
+# Labelme config for cadastral map annotation.
+# Passed to labelme via --config at launch.
+#
+# Feature labels (type one of these as the shape label):
+#   boundary  → linestrip  — land parcel boundary lines
+#   water     → polygon    — water features
+#   building  → polygon    — building footprints
+#   damage    → polygon    — document damage / symbology cover
+#   <text>    → polygon    — any other label is treated as text content
+#
+labels:
+  - boundary
+  - water
+  - building
+  - damage
+
+auto_save: false
+keep_prev: false
+
+shortcuts:
+  create_linestrip: Ctrl+L

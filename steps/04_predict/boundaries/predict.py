@@ -1,12 +1,12 @@
 """
 Run boundary U-Net inference on all patches for a given sheet.
 
-Reads  : data/patches/images/<SHEET_ID>/*.png       (1024px patches)
-Writes : data/predictions/boundaries/<SHEET_ID>/*.png (1024px binary masks)
+Reads  : data/patches/images/<SHEET_ID>/*.png       (512px patches)
+Writes : data/predictions/boundaries/<SHEET_ID>/*.png (512px binary masks)
 
-Each 1024px patch is split into a 4×4 grid of 256px sub-patches (16 total),
+Each 512px patch is split into a 2×2 grid of 256px sub-patches (4 total),
 matching the model's training resolution exactly — no downsampling. Predictions
-are reassembled into a 1024px output mask aligned with the metadata CSV.
+are reassembled into a 512px output mask aligned with the metadata CSV.
 
 Usage:
     python predict.py --sheet SHEET_ID
@@ -60,8 +60,8 @@ def predict(sheet_id: str, repo_root: Path):
     ucfg = cfg["unet"]
 
     sub_size   = int(ucfg["inference_size"])   # 256 — model input and sub-patch size
-    patch_size = int(cfg["patchify"]["patch_size"])  # 1024
-    n_tiles    = (patch_size // sub_size) ** 2  # 16
+    patch_size = int(cfg["patchify"]["patch_size"])  # 512
+    n_tiles    = (patch_size // sub_size) ** 2  # 4
     channels   = int(ucfg["image_channels"])
     loss_type  = ucfg["loss_type"]
     threshold  = float(ucfg["threshold"])

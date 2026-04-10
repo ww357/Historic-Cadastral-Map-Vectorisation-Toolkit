@@ -4,15 +4,18 @@ channels:
   - defaults
 dependencies:
   - python=3.11
-  - rasterio
-  - gdal
+  - rasterio       # GeoTIFF read/write, affine transforms (steps 01, 05, 06)
+  - gdal           # raster → GeoPackage raster layer (step 06)
   - numpy
-  - pandas
-  - pyyaml
+  - pandas         # patch metadata CSV (steps 01, 05)
+  - pyyaml         # config.yaml parsing (all steps)
+  - pillow         # PNG patch read/write (steps 01, 02, 05)
   - tqdm
-  - shapely
-  - geopandas
-  - fiona
+  - shapely        # geometry objects (step 06)
+  - geopandas      # GeoPackage vector layer write (step 06)
+  - fiona          # GeoPackage backend for geopandas (step 06)
+  - scikit-image   # skeletonize (step 06)
   - pip
   - pip:
-    - labelme
+    - labelme      # annotation GUI (step 02)
+    - skan         # skeleton graph → polyline paths (step 06)
