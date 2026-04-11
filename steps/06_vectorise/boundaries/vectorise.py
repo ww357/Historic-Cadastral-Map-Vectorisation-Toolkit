@@ -37,6 +37,8 @@ from skimage.morphology import skeletonize
 from skan import Skeleton
 from tqdm import tqdm
 
+from topology_repair import repair_topology
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -123,8 +125,10 @@ def vectorise(sheet_id: str, repo_root: Path):
     cfg  = load_config()
     vcfg = cfg["vectorise"]["boundaries"]
 
-    simplify_tol = float(vcfg["simplify_tolerance"])
-    min_length   = float(vcfg["min_length"])
+    simplify_tol  = float(vcfg["simplify_tolerance"])
+    min_length    = float(vcfg["min_length"])
+    repair_cfg    = vcfg.get("topology_repair", {})
+    do_repair     = repair_cfg.get("enabled", False)
 
     stitched_path = repo_root / cfg["paths"]["stitched"] / "boundaries" / f"{sheet_id}.tif"
     out_dir       = repo_root / cfg["paths"]["outputs"]
@@ -162,16 +166,31 @@ def vectorise(sheet_id: str, repo_root: Path):
         print("Warning: no polylines produced — check mask content and config thresholds.")
         return
 
-    # --- Write vector layer ---
+    # --- Build GeoDataFrame ---
     gdf = gpd.GeoDataFrame(
         {"sheet_id": sheet_id, "length": [l.length for l in lines]},
         geometry=lines,
         crs=crs if has_georef else None,
     )
+
+    # --- Optional topology repair ---
+    if do_repair:
+        snap_dist       = float(repair_cfg.get("snap_distance", 15.0))
+        angle_tolerance = repair_cfg.get("angle_tolerance", None)
+        if angle_tolerance is not None:
+            angle_tolerance = float(angle_tolerance)
+        print(f"\nTopology repair  snap={snap_dist} CRS units"
+              + (f"  angle≤{angle_tolerance}°" if angle_tolerance else "  no angle filter"))
+        gdf = repair_topology(gdf, snap_distance=snap_dist, angle_tolerance=angle_tolerance)
+        n_bridges = int(gdf["is_bridge"].sum())
+        print(f"  {n_bridges} bridge segment(s) added")
+
+    # --- Write vector layer ---
     gdf.to_file(out_path, driver="GPKG", layer="boundaries", mode="w")
     print(f"\nSaved → {out_path.relative_to(repo_root)}")
     print(f"  boundaries (vector):  {len(gdf):,} features  |  "
-          f"total length: {gdf['length'].sum():,.1f} map units")
+          f"total length: {gdf['length'].sum():,.1f} map units"
+          + (f"  ({int(gdf['is_bridge'].sum())} bridges)" if do_repair else ""))
 
     # --- Write raster layer ---
     print("  Adding raster layer...")

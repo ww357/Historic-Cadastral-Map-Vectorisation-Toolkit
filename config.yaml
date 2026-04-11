@@ -37,6 +37,14 @@ vectorise:
     simplify_tolerance: 2.0  # Douglas-Peucker tolerance in CRS units (metres for BNG,
                              # pixels for non-georef). Increase to generalise more.
     min_length: 10.0         # discard lines shorter than this (same units as above)
+    topology_repair:
+      enabled: false         # set true to add bridging segments after vectorisation
+      snap_distance: 3.0    # maximum gap to bridge in CRS units (metres for BNG)
+                             # keep conservative — start low and increase if needed
+                             # a good starting point is 3–5× simplify_tolerance
+      angle_tolerance: null  # degrees; null = bridge any nearby endpoint pair
+                             # set e.g. 25 to restrict to roughly collinear lines only
+                             # (avoids bridging two unrelated boundaries at a corner)
   # Future feature sections follow the same pattern, e.g.:
   # buildings:
   #   simplify_tolerance: 1.0
