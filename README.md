@@ -6,6 +6,8 @@ Initial setup:
 # these are temporary instructions for now before final environments are subbed in.
 conda env create -f envs/maptools.yml
 conda activate maptools
+        #Not yet in envs: cond env create -f envs/tf-gpu.yml
+
 ```
 
 Running through the pipeline:
@@ -27,3 +29,11 @@ python "steps/06_vectorise/boundaries/vectorise.py" --sheet Timberscombe
 
 ```
 
+## Acknowledgements
+
+The boundary U-Net architecture is based on:
+
+> Ran et al. (2022). Raster Map Line Element Extraction Method Based on Improved U-Net Network.
+> *ISPRS International Journal of Geo-Information*, 11(8), 439.
+> https://doi.org/10.3390/ijgi11080439
+> GitHub: https://github.com/FutureuserR/Raster-Map
