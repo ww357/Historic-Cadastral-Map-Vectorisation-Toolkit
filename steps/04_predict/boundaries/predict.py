@@ -55,29 +55,67 @@ def assemble_patch(tiles: list[np.ndarray], positions: list[tuple],
     return out
 
 
-def predict(sheet_id: str, repo_root: Path):
+def resolve_weights(weights_arg: str | None, repo_root: Path, paths_cfg: dict) -> Path:
+    """
+    Find weights to use. Search order:
+      1. --weights CLI argument (explicit path)
+      2. Most recently modified *_best.weights.h5 in models/finetuned/
+      3. models/finetuned/model_weights.weights.h5
+      4. Most recently modified *.weights.h5 in models/base/ (recursive)
+    """
+    if weights_arg:
+        p = Path(weights_arg)
+        if not p.is_absolute():
+            p = repo_root / p
+        if p.exists():
+            return p
+        sys.exit(f"Weights not found: {p}")
+
+    finetuned_dir = repo_root / paths_cfg["models_finetuned"]
+    base_dir      = repo_root / paths_cfg["models_base"]
+
+    # Most recent fine-tune checkpoint
+    candidates = sorted(finetuned_dir.rglob("*_best.weights.h5"),
+                        key=lambda p: p.stat().st_mtime)
+    if candidates:
+        return candidates[-1]
+
+    # Explicit named file in finetuned dir
+    named = finetuned_dir / "model_weights.weights.h5"
+    if named.exists():
+        return named
+
+    # Fall back to base weights
+    candidates = sorted(base_dir.rglob("*.weights.h5"),
+                        key=lambda p: p.stat().st_mtime)
+    if candidates:
+        return candidates[-1]
+
+    sys.exit(
+        f"No weights found. Searched:\n"
+        f"  {finetuned_dir} (*_best.weights.h5)\n"
+        f"  {base_dir} (*.weights.h5)\n"
+        "Pass --weights <path> to specify a file explicitly."
+    )
+
+
+def predict(sheet_id: str, repo_root: Path, weights_arg: str | None = None):
     cfg  = load_config()
     ucfg = cfg["unet"]
 
-    sub_size   = int(ucfg["inference_size"])   # 256 — model input and sub-patch size
-    patch_size = int(cfg["patchify"]["patch_size"])  # 512
-    n_tiles    = (patch_size // sub_size) ** 2  # 4
+    sub_size   = int(ucfg["inference_size"])
+    patch_size = int(cfg["patchify"]["patch_size"])
+    n_tiles    = (patch_size // sub_size) ** 2
     channels   = int(ucfg["image_channels"])
     loss_type  = ucfg["loss_type"]
     threshold  = float(ucfg["threshold"])
 
     patches_dir  = repo_root / cfg["paths"]["patches"] / "images" / sheet_id
     out_dir      = repo_root / cfg["paths"]["predictions"] / "boundaries" / sheet_id
-    weights_path = repo_root / cfg["paths"]["models_finetuned"] / "unet" / sheet_id / "model_weights.weights.h5"
-
-    if not weights_path.exists():
-        weights_path = repo_root / cfg["paths"]["models_base"] / "unet" / "model_weights.weights.h5"
-        print(f"No fine-tuned weights for '{sheet_id}', using base weights.")
+    weights_path = resolve_weights(weights_arg, repo_root, cfg["paths"])
 
     if not patches_dir.exists():
         sys.exit(f"Patches not found: {patches_dir}  — run 01_patchify first.")
-    if not weights_path.exists():
-        sys.exit(f"Weights not found: {weights_path}")
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -123,6 +161,8 @@ def predict(sheet_id: str, repo_root: Path):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run boundary U-Net on patchified map sheet.")
-    parser.add_argument("--sheet", required=True, help="Sheet ID")
+    parser.add_argument("--sheet",   required=True, help="Sheet ID")
+    parser.add_argument("--weights", default=None,
+                        help="Path to weights file (default: auto-selects most recent fine-tune)")
     args = parser.parse_args()
-    predict(args.sheet, ROOT)
+    predict(args.sheet, ROOT, args.weights)

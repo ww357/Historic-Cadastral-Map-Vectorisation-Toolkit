@@ -18,4 +18,5 @@ auto_save: false
 keep_prev: false
 
 shortcuts:
-  create_linestrip: Ctrl+L
+  create_linestrip: "L"
+  create_polygon: "P"

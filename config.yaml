@@ -8,6 +8,7 @@ paths:
   outputs: data/outputs/
   models_base: models/base/
   models_finetuned: models/finetuned/
+  logs: models/logs/
 
 patchify:
   patch_size: 512         # px — boundaries/MapSAM use 512px patches directly;
@@ -40,6 +41,15 @@ vectorise:
   # buildings:
   #   simplify_tolerance: 1.0
   #   min_area: 5.0
+
+finetune:
+  epochs: 50
+  learning_rate: 0.0001       # lower than build_model default (1e-3) for fine-tuning
+  val_split: 0.15             # fraction of patches held out for validation
+  apl_tau: 3                  # coverage tolerance in pixels for APL / path-F1
+  max_val_tiles: 200          # cap validation tiles per epoch for speed
+  early_stopping_patience: 10 # stop if path_f1 doesn't improve for this many epochs
+  # checkpoint_metric: path_f1  # always path_f1 — here for documentation only
 
 annotation:
   # Labels the user types in labelme for each feature class.
