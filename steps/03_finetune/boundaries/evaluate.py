@@ -26,7 +26,7 @@ import numpy as np
 import yaml
 from PIL import Image
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 from models.unet.architecture import build_model
@@ -39,14 +39,24 @@ import tensorflow as tf
 # Data loading  (shared logic with train.py)
 # ---------------------------------------------------------------------------
 
-def load_eval_tiles(patches_dir: Path, masks_dir: Path, tile_size: int):
+def load_eval_tiles(patches_root: Path, masks_root: Path, tile_size: int):
+    """
+    Find all paired (patch, mask) PNGs across all sheet subdirectories and
+    split each 512px pair into tile_size tiles.
+
+    patches_root : data/patches/images/          — walks <sheet>/<patch>.png
+    masks_root   : data/annotations/<label>/     — walks <sheet>/masks/<patch>.png
+    """
+    # Build a stem → mask_path lookup from all masks found under masks_root
+    mask_lookup = {p.stem: p for p in masks_root.rglob("masks/*.png")}
+
     tiles = []
-    for patch_path in sorted(patches_dir.glob("*.png")):
-        mask_path = masks_dir / patch_path.name
-        if not mask_path.exists():
+    for patch_path in sorted(patches_root.rglob("*.png")):
+        mask_path = mask_lookup.get(patch_path.stem)
+        if mask_path is None:
             continue
         img  = np.array(Image.open(patch_path).convert("L"), dtype=np.float32) / 255.0
-        mask = np.array(Image.open(mask_path).convert("L"), dtype=np.float32)
+        mask = np.array(Image.open(mask_path).convert("L"),  dtype=np.float32)
         mask = (mask > 127).astype(np.float32)
         h, w = img.shape
         for r in range(h // tile_size):
@@ -129,9 +139,10 @@ def main():
     ft_cfg    = cfg["finetune"]
     paths_cfg = cfg["paths"]
 
-    tile_size   = unet_cfg["inference_size"]
-    patches_dir = ROOT / paths_cfg["patches"]
-    masks_dir   = ROOT / (args.data_dir or paths_cfg["annotations"]) / "boundaries" / "masks"
+    boundary_label = cfg["annotation"].get("boundary_label", "boundary")
+    tile_size      = unet_cfg["inference_size"]
+    patches_dir    = ROOT / paths_cfg["patches"] / "images"
+    masks_dir      = ROOT / (args.data_dir or paths_cfg["annotations"]) / boundary_label
 
     # Collect weight files from base + finetuned dirs (or override)
     if args.weights_dir:
@@ -151,14 +162,14 @@ def main():
     if not weight_files:
         sys.exit(f"No weight files found in: {search_dirs}")
 
-    # Load eval tiles
+    # Load eval tiles — walks all sheet subdirectories
     print("Loading evaluation tiles...")
     tiles = load_eval_tiles(patches_dir, masks_dir, tile_size)
     if not tiles:
         sys.exit(
             f"No paired eval tiles found.\n"
-            f"  Patches: {patches_dir}\n"
-            f"  Masks:   {masks_dir}"
+            f"  Patches : {patches_dir}  (searches subdirectories)\n"
+            f"  Masks   : {masks_dir}  (searches <sheet>/masks/)"
         )
     print(f"  {len(tiles)} tiles\n")
 

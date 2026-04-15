@@ -10,12 +10,13 @@ Usage
 Data expected
 -------------
     data/patches/           PNG patches from step 01_patchify
-    data/annotations/boundaries/   binary mask PNGs from step 02_annotate/export_masks.py
+    data/annotations/<boundary_label>/   binary mask PNGs from step 02_annotate/export_masks.py
+                                         boundary_label is set in config.yaml (default: "boundary")
     File names must match (e.g. patch_0000.png in both folders).
 
 Outputs
 -------
-    models/finetuned/{name}_best.weights.h5   — best weights by path_f1
+    models/finetuned/unet_boundaries_{name}_best.weights.h5   — best weights by path_f1
     models/logs/{name}_metrics.csv            — per-epoch metrics
 """
 
@@ -29,7 +30,7 @@ import numpy as np
 import yaml
 from PIL import Image
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 from models.unet.architecture import build_model, LOSS_MAP, dsc, clDice, tp, tn, prec, recall
@@ -187,10 +188,11 @@ def main():
     ft_cfg       = cfg["finetune"]
     paths_cfg    = cfg["paths"]
 
-    patches_base = ROOT / paths_cfg["patches"] / "images"
-    patches_dir  = patches_base / args.sheet if args.sheet else patches_base
-    masks_base   = ROOT / paths_cfg["annotations"] / "boundaries"
-    masks_dir    = (masks_base / args.sheet / "masks") if args.sheet else masks_base
+    boundary_label = cfg["annotation"].get("boundary_label", "boundary")
+    patches_base   = ROOT / paths_cfg["patches"] / "images"
+    patches_dir    = patches_base / args.sheet if args.sheet else patches_base
+    masks_base     = ROOT / paths_cfg["annotations"] / boundary_label
+    masks_dir      = (masks_base / args.sheet / "masks") if args.sheet else masks_base
 
     # Auto-export masks from labelme JSON if not yet done
     if not masks_dir.exists() or not any(masks_dir.glob("*.png")):
@@ -211,7 +213,7 @@ def main():
     weights_dir.mkdir(parents=True, exist_ok=True)
     logs_dir.mkdir(parents=True, exist_ok=True)
 
-    run_name = args.name or datetime.now().strftime("finetune_%Y%m%d_%H%M")
+    run_name = args.name or datetime.now().strftime("unet_boundaries_%Y%m%d_%H%M")
     tile_size = unet_cfg["inference_size"]
 
     # ---- Load data ---------------------------------------------------------

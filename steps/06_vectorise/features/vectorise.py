@@ -1,26 +1,34 @@
 """
-Vectorise a stitched boundary mask into simplified polylines and write to GeoPackage.
+Vectorise a stitched MapSAM feature mask into simplified polygons and write to GeoPackage.
 
-Reads  : data/stitched/boundaries/<SHEET_ID>.tif
-Writes : data/outputs/<SHEET_ID>.gpkg  — layer "boundaries"      (polylines)
-                                       — layer "boundary_raster"  (binary prediction)
+Any feature label used during annotation can be vectorised — there is no fixed
+feature list.  Pass --feature with the same label name used in labelme.
+
+Reads  : data/stitched/<FEATURE>/<SHEET_ID>.tif
+Writes : data/outputs/<SHEET_ID>.gpkg  — layer "<feature>"         (polygons)
+                                       — layer "<feature>_raster"  (binary prediction)
 
 Pipeline:
-  1. Load binary mask
-  2. Skeletonize → 1px centrelines (Lee 1994, topology-preserving)
-  3. Extract polylines from skeleton graph via skan
-  4. Convert pixel coords → world coords using GeoTIFF transform
-  5. Simplify with Douglas-Peucker (tolerance from config)
-  6. Filter by minimum line length
-  7. Write "boundaries" vector layer to GeoPackage
-  8. Write "boundary_raster" raster layer to GeoPackage (for visual comparison)
+  1. Load binary mask from stitched GeoTIFF
+  2. Polygonize using rasterio.features.shapes  (equivalent to GDAL Polygonize)
+  3. Convert to Shapely geometries + GeoDataFrame
+  4. Simplify with Douglas-Peucker  (tolerance from config)
+  5. Filter by minimum polygon area  (from config)
+  6. Write polygon layer to GeoPackage
+  7. Write raster layer to GeoPackage  (for visual comparison)
 
 If the GeoPackage already exists (e.g. from a previous feature run),
-both layers are replaced without touching other layers.
+the feature layers are replaced without touching other layers.
+
+Per-feature config is read from vectorise.features.<feature> in config.yaml.
+If no entry exists for the specific feature, vectorise.features.default is used.
 
 Usage:
-    python vectorise.py --sheet SHEET_ID
+    python vectorise.py --sheet Timberscombe --feature water
+    python vectorise.py --sheet Timberscombe --feature building
 """
+
+from __future__ import annotations
 
 import argparse
 import sqlite3
@@ -33,12 +41,10 @@ import pandas as pd
 import rasterio
 import yaml
 from osgeo import gdal
-from shapely.geometry import LineString, box
-from skimage.morphology import skeletonize
-from skan import Skeleton
+from rasterio.features import shapes
+from shapely.geometry import box, shape
+from shapely.validation import make_valid
 from tqdm import tqdm
-
-from topology_repair import repair_topology
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -50,38 +56,57 @@ def load_config() -> dict:
     return yaml.safe_load(p.read_text())
 
 
-def pixel_to_world(rows, cols, transform) -> list[tuple]:
-    xs, ys = rasterio.transform.xy(transform, rows, cols)
-    return list(zip(xs, ys))
+def feature_config(cfg: dict, feature: str) -> dict:
+    """
+    Return vectorise config for the given feature.
+    Looks for vectorise.features.<feature> first, then vectorise.features.default.
+    """
+    vcfg = cfg.get("vectorise", {}).get("features", {})
+    if feature in vcfg:
+        return vcfg[feature]
+    if "default" in vcfg:
+        return vcfg["default"]
+    # Fallback values if nothing is configured
+    return {"simplify_tolerance": 2.0, "min_area": 25.0}
 
 
-def extract_polylines(skeleton: np.ndarray, transform, has_georef: bool,
-                      simplify_tol: float, min_length: float) -> list[LineString]:
+def extract_polygons(mask: np.ndarray, transform, has_georef: bool,
+                     simplify_tol: float, min_area: float) -> list:
     """
-    Walk the skeleton graph with skan and return a list of simplified LineStrings.
-    Each skan 'path' is a sequence of connected pixels between two junction/endpoint
-    pixels — the natural segments for polyline vectorisation.
+    Polygonize a binary mask and return simplified, filtered Shapely polygons.
+
+    rasterio.features.shapes yields (geojson_geom, value) pairs for each
+    connected region.  We keep only the foreground (value > 0) polygons,
+    convert to Shapely, simplify, and filter by area.
     """
-    if not skeleton.any():
+    binary = (mask > 0).astype(np.uint8)
+    if not binary.any():
         return []
 
-    skel_obj = Skeleton(skeleton, keep_images=False)
-    lines = []
+    polygons = []
+    gen = shapes(binary, mask=binary, connectivity=8,
+                 transform=transform if has_georef else rasterio.transform.IDENTITY)
 
-    for i in tqdm(range(skel_obj.n_paths), desc="Tracing paths", unit="path", leave=False):
-        coords = skel_obj.path_coordinates(i)   # (N, 2) — rows, cols
-        if len(coords) < 2:
+    for geom_dict, value in tqdm(gen, desc="Polygonizing", unit="region", leave=False):
+        if value == 0:
             continue
 
-        rows, cols = coords[:, 0], coords[:, 1]
-        pts = pixel_to_world(rows, cols, transform) if has_georef \
-              else [(float(c), float(r)) for r, c in zip(rows, cols)]
+        geom = shape(geom_dict)
+        geom = make_valid(geom)     # repair any self-intersections from raster artefacts
 
-        line = LineString(pts).simplify(simplify_tol, preserve_topology=True)
-        if not line.is_empty and line.length >= min_length:
-            lines.append(line)
+        # Simplify — Douglas-Peucker, same parameter as boundaries
+        geom = geom.simplify(simplify_tol, preserve_topology=True)
 
-    return lines
+        if geom.is_empty:
+            continue
+
+        # A simplified result may be a MultiPolygon — keep each part individually
+        parts = list(geom.geoms) if geom.geom_type == "MultiPolygon" else [geom]
+        for part in parts:
+            if not part.is_empty and part.area >= min_area:
+                polygons.append(part)
+
+    return polygons
 
 
 def _layer_exists(gpkg_path: Path, layer_name: str) -> bool:
@@ -132,7 +157,6 @@ def _write_patch_grid(gpkg_path: Path, meta_path: Path, transform,
             x1, y1 = transform * (c + pw, r + ph)
             geom = box(min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
         else:
-            # Pixel coordinates — origin at top-left, y increases downward
             geom = box(c, r, c + pw, r + ph)
 
         rectangles.append({"patch_id": row.patch_id, "sheet_id": sheet_id, "geometry": geom})
@@ -171,7 +195,7 @@ def _drop_raster_layer(gpkg_path: Path, table_name: str):
         con.execute(f"DROP TABLE IF EXISTS [{table_name}]")
         con.commit()
     except sqlite3.OperationalError:
-        pass  # tables may not exist yet on first run
+        pass
     finally:
         con.close()
 
@@ -194,19 +218,17 @@ def add_raster_layer(stitched_path: Path, gpkg_path: Path, layer_name: str):
             "APPEND_SUBDATASET=YES",
         ],
     )
-    src = None  # close dataset
+    src = None
 
 
-def vectorise(sheet_id: str, repo_root: Path):
+def vectorise(sheet_id: str, feature: str, repo_root: Path):
     cfg  = load_config()
-    vcfg = cfg["vectorise"]["boundaries"]
+    fcfg = feature_config(cfg, feature)
 
-    simplify_tol  = float(vcfg["simplify_tolerance"])
-    min_length    = float(vcfg["min_length"])
-    repair_cfg    = vcfg.get("topology_repair", {})
-    do_repair     = repair_cfg.get("enabled", False)
+    simplify_tol = float(fcfg["simplify_tolerance"])
+    min_area     = float(fcfg["min_area"])
 
-    stitched_path = repo_root / cfg["paths"]["stitched"] / "boundaries" / f"{sheet_id}.tif"
+    stitched_path = repo_root / cfg["paths"]["stitched"] / feature / f"{sheet_id}.tif"
     meta_path     = repo_root / cfg["paths"]["patches"] / "metadata" / f"{sheet_id}_patches.csv"
     out_dir       = repo_root / cfg["paths"]["outputs"]
     out_path      = out_dir / f"{sheet_id}.gpkg"
@@ -222,61 +244,48 @@ def vectorise(sheet_id: str, repo_root: Path):
         crs        = src.crs
         has_georef = src.crs is not None
 
-    print(f"Sheet        : {sheet_id}")
-    print(f"Mask         : {mask.shape[1]} × {mask.shape[0]} px  "
-          f"|  boundary pixels: {(mask > 0).sum():,}")
-    print(f"CRS          : {crs or 'none (pixel coords)'}")
-    print(f"Simplify tol : {simplify_tol}  |  min length: {min_length}")
+    print(f"Sheet         : {sheet_id}")
+    print(f"Feature       : {feature}")
+    print(f"Mask          : {mask.shape[1]} × {mask.shape[0]} px  "
+          f"|  foreground pixels: {(mask > 0).sum():,}")
+    print(f"CRS           : {crs or 'none (pixel coords)'}")
+    print(f"Simplify tol  : {simplify_tol}  |  min area: {min_area} map units²")
 
-    # --- Skeletonize ---
-    print("\nSkeletonizing...")
-    binary   = mask > 0
-    skeleton = skeletonize(binary)
-    print(f"Skeleton pixels: {skeleton.sum():,}  (reduced from {binary.sum():,})")
+    # --- Polygonize ---
+    print("\nPolygonizing...")
+    polygons = extract_polygons(mask, transform, has_georef, simplify_tol, min_area)
+    print(f"Polygons after filtering: {len(polygons):,}")
 
-    # --- Extract polylines ---
-    print("Extracting polylines...")
-    lines = extract_polylines(skeleton, transform, has_georef, simplify_tol, min_length)
-    print(f"Polylines after filtering: {len(lines):,}")
-
-    if not lines:
-        print("Warning: no polylines produced — check mask content and config thresholds.")
+    if not polygons:
+        print("Warning: no polygons produced — check mask content and config thresholds.")
         return
 
     # --- Build GeoDataFrame ---
     gdf = gpd.GeoDataFrame(
-        {"sheet_id": sheet_id, "length": [l.length for l in lines]},
-        geometry=lines,
+        {
+            "sheet_id": sheet_id,
+            "feature":  feature,
+            "area":     [p.area for p in polygons],
+        },
+        geometry=polygons,
         crs=crs if has_georef else None,
     )
 
-    # --- Optional topology repair ---
-    if do_repair:
-        snap_dist       = float(repair_cfg.get("snap_distance", 15.0))
-        angle_tolerance = repair_cfg.get("angle_tolerance", None)
-        if angle_tolerance is not None:
-            angle_tolerance = float(angle_tolerance)
-        print(f"\nTopology repair  snap={snap_dist} CRS units"
-              + (f"  angle≤{angle_tolerance}°" if angle_tolerance else "  no angle filter"))
-        gdf = repair_topology(gdf, snap_distance=snap_dist, angle_tolerance=angle_tolerance)
-        n_bridges = int(gdf["is_bridge"].sum())
-        print(f"  {n_bridges} bridge segment(s) added")
-
     # --- Write vector layer ---
-    # Drop only the boundaries layer so other feature layers in the same GeoPackage
+    # Drop only this feature's layer so other layers in the shared GeoPackage
     # are preserved. mode="a" appends to an existing file; "w" creates a new one.
-    _drop_vector_layer(out_path, "boundaries")
+    _drop_vector_layer(out_path, feature)
     write_mode = "a" if out_path.exists() else "w"
-    gdf.to_file(out_path, driver="GPKG", layer="boundaries", mode=write_mode)
+    gdf.to_file(out_path, driver="GPKG", layer=feature, mode=write_mode)
     print(f"\nSaved → {out_path.relative_to(repo_root)}")
-    print(f"  boundaries (vector):  {len(gdf):,} features  |  "
-          f"total length: {gdf['length'].sum():,.1f} map units"
-          + (f"  ({int(gdf['is_bridge'].sum())} bridges)" if do_repair else ""))
+    print(f"  {feature} (vector):  {len(gdf):,} polygons  |  "
+          f"total area: {gdf['area'].sum():,.1f} map units²")
 
     # --- Write raster layer ---
-    print("  Adding raster layer...")
-    add_raster_layer(stitched_path, out_path, "boundary_raster")
-    print("  boundary_raster (raster): done")
+    raster_layer = f"{feature}_raster"
+    print(f"  Adding {raster_layer}...")
+    add_raster_layer(stitched_path, out_path, raster_layer)
+    print(f"  {raster_layer} (raster): done")
 
     # --- Write patch grid (once per sheet — skipped if already present) ---
     _write_patch_grid(out_path, meta_path, transform, crs, has_georef, sheet_id)
@@ -284,8 +293,11 @@ def vectorise(sheet_id: str, repo_root: Path):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Vectorise boundary mask into polylines and write to GeoPackage."
+        description="Vectorise MapSAM feature mask into polygons and write to GeoPackage."
     )
-    parser.add_argument("--sheet", required=True, help="Sheet ID")
+    parser.add_argument("--sheet",   required=True, help="Sheet ID")
+    parser.add_argument("--feature", required=True,
+                        help="Feature class — any label used in labelme annotations "
+                             "(e.g. water, building, vegetation)")
     args = parser.parse_args()
-    vectorise(args.sheet, ROOT)
+    vectorise(args.sheet, args.feature, ROOT)

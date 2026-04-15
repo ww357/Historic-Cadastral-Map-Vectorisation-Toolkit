@@ -1,24 +1,26 @@
 """
 Convert labelme JSON annotations to binary mask PNGs, sorted by feature class.
 
+Every unique label drawn in labelme automatically becomes its own feature class —
+there is no hardcoded list of allowed labels.  The label name is used directly as
+the output folder name (e.g. label "water" → annotations/water/).
+
+One exception: shapes labelled "boundary" (or whatever annotation.boundary_label
+is set to in config.yaml) are rendered as linesteps at the configured line width
+instead of filled polygons, because boundaries are linestrip annotations.
+
 Reads   : data/annotations/labelme_json/<SHEET_ID>/*.json
-Writes  : data/annotations/<feature>/<SHEET_ID>/images/*.png  — patch image copy
-          data/annotations/<feature>/<SHEET_ID>/masks/*.png   — binary mask
-          data/annotations/text/<SHEET_ID>/labels/*.json      — text content sidecars
+Writes  : data/annotations/<label>/<SHEET_ID>/images/*.png  — patch image copy
+          data/annotations/<label>/<SHEET_ID>/masks/*.png   — binary mask
 
-Feature routing:
-  label == "boundary"  → annotations/boundaries/  (linestrip rendered at line_width px)
-  label == "water"     → annotations/water/
-  label == "building"  → annotations/buildings/
-  label == "damage"    → annotations/damage/
-  anything else        → annotations/text/  (label value = text content)
-
-Patches annotated with multiple features produce a mask file in each relevant folder.
-Patches with no shapes for a given feature are skipped for that feature.
+Patches annotated with multiple labels produce a mask file in each relevant folder.
+Patches with no shapes for a given label are skipped for that label.
 
 Usage:
     python export_masks.py --sheet SHEET_ID [--line-width N]
 """
+
+from __future__ import annotations
 
 import argparse
 import json
@@ -40,18 +42,29 @@ def load_config() -> dict:
     return yaml.safe_load(p.read_text())
 
 
-def render_mask(shapes: list, size: tuple[int, int], line_width: int) -> Image.Image:
-    """Render a list of labelme shapes into a binary (L-mode) mask."""
+def render_mask(shapes: list, size: tuple[int, int],
+                line_width: int, boundary_label: str) -> Image.Image:
+    """
+    Render a list of labelme shapes into a binary (L-mode) mask.
+
+    Shapes whose label matches boundary_label are drawn as linesteps at
+    line_width pixels wide.  All other shapes are filled polygons/rectangles.
+    """
     mask = Image.new("L", size, 0)
     draw = ImageDraw.Draw(mask)
     for shape in shapes:
         pts = [tuple(p) for p in shape["points"]]
-        if shape["shape_type"] == "linestrip":
-            if len(pts) >= 2:
+        if shape.get("label", "") == boundary_label:
+            # Boundary annotations: linestrip rendered at line_width
+            if shape["shape_type"] == "linestrip" and len(pts) >= 2:
                 draw.line(pts, fill=255, width=line_width)
-        elif shape["shape_type"] in ("polygon", "rectangle"):
-            if len(pts) >= 3:
+        else:
+            # All other labels: filled polygon / rectangle
+            if shape["shape_type"] in ("polygon", "rectangle") and len(pts) >= 3:
                 draw.polygon(pts, fill=255)
+            elif shape["shape_type"] == "linestrip" and len(pts) >= 2:
+                # Linestips for non-boundary labels still rendered as lines
+                draw.line(pts, fill=255, width=line_width)
     return mask
 
 
@@ -60,8 +73,7 @@ def export_masks(sheet_id: str, line_width_override: int | None):
     acfg    = cfg["annotation"]
     ann_dir = ROOT / cfg["paths"]["annotations"]
 
-    known_labels   = set(acfg["feature_labels"])
-    label_to_folder = acfg["label_to_folder"]
+    boundary_label = acfg.get("boundary_label", "boundary")
     line_width     = line_width_override or int(acfg["line_width"])
 
     json_dir    = ann_dir / "labelme_json" / sheet_id
@@ -80,8 +92,8 @@ def export_masks(sheet_id: str, line_width_override: int | None):
     print(f"JSON files : {len(json_files)}")
     print(f"Line width : {line_width}px\n")
 
-    # Track counts per feature for summary
-    counts = defaultdict(int)
+    # counts[label] = number of patches that have at least one shape of that label
+    counts: dict[str, int] = defaultdict(int)
 
     for json_path in json_files:
         with open(json_path) as f:
@@ -91,68 +103,42 @@ def export_masks(sheet_id: str, line_width_override: int | None):
         if not shapes:
             continue
 
-        patch_id   = json_path.stem
-        patch_img  = patches_dir / f"{patch_id}.png"
-        img_w      = data.get("imageWidth",  512)
-        img_h      = data.get("imageHeight", 512)
+        patch_id  = json_path.stem
+        patch_img = patches_dir / f"{patch_id}.png"
+        img_w     = data.get("imageWidth",  512)
+        img_h     = data.get("imageHeight", 512)
 
-        # Group shapes by feature label
-        feature_shapes = defaultdict(list)
-        text_shapes    = []
-
+        # Group shapes by their label — every unique label is its own class
+        label_shapes: dict[str, list] = defaultdict(list)
         for shape in shapes:
             label = shape.get("label", "").strip()
-            if label in known_labels:
-                feature_shapes[label].append(shape)
-            else:
-                text_shapes.append(shape)
+            if label:
+                label_shapes[label].append(shape)
 
-        # --- Export each feature class ---
-        for label, f_shapes in feature_shapes.items():
-            folder   = label_to_folder.get(label, label)
-            out_base = ann_dir / folder / sheet_id
+        # Export one mask per unique label found in this patch
+        for label, l_shapes in label_shapes.items():
+            out_base = ann_dir / label / sheet_id
             img_out  = out_base / "images"
             mask_out = out_base / "masks"
             img_out.mkdir(parents=True, exist_ok=True)
             mask_out.mkdir(parents=True, exist_ok=True)
 
-            mask = render_mask(f_shapes, (img_w, img_h), line_width)
+            mask = render_mask(l_shapes, (img_w, img_h), line_width, boundary_label)
             mask.save(mask_out / f"{patch_id}.png")
             if patch_img.exists():
                 shutil.copy(patch_img, img_out / f"{patch_id}.png")
 
-            counts[folder] += 1
+            counts[label] += 1
 
-        # --- Export text annotations ---
-        if text_shapes:
-            out_base   = ann_dir / "text" / sheet_id
-            img_out    = out_base / "images"
-            mask_out   = out_base / "masks"
-            label_out  = out_base / "labels"
-            for d in (img_out, mask_out, label_out):
-                d.mkdir(parents=True, exist_ok=True)
+    if not counts:
+        print("No annotated shapes found.")
+        return
 
-            mask = render_mask(text_shapes, (img_w, img_h), line_width)
-            mask.save(mask_out / f"{patch_id}.png")
-            if patch_img.exists():
-                shutil.copy(patch_img, img_out / f"{patch_id}.png")
-
-            # Sidecar JSON preserving text content and polygon coordinates
-            sidecar = {
-                "patch_id": patch_id,
-                "texts": [
-                    {"text": s["label"], "points": s["points"]}
-                    for s in text_shapes
-                ],
-            }
-            with open(label_out / f"{patch_id}.json", "w") as f:
-                json.dump(sidecar, f, indent=2)
-
-            counts["text"] += 1
-
+    # Summary: unique classes actually present in the annotations
+    print(f"Unique classes found: {len(counts)}")
     print("Exported:")
-    for feature, n in sorted(counts.items()):
-        print(f"  {feature:<12} {n} patch(es)")
+    for label, n in sorted(counts.items()):
+        print(f"  {label:<16} {n} patch(es)")
     print(f"\nAnnotations written to {ann_dir}/")
 
 

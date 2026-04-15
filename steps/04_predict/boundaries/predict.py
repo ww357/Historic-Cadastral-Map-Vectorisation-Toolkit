@@ -119,20 +119,30 @@ def predict(sheet_id: str, repo_root: Path, weights_arg: str | None = None):
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Patches that have manual annotations are skipped — the stitch step will
+    # place the annotation mask directly, which is already ground-truth quality.
+    boundary_label = cfg["annotation"].get("boundary_label", "boundary")
+    ann_mask_dir   = repo_root / cfg["paths"]["annotations"] / boundary_label / sheet_id / "masks"
+    annotated      = {p.stem for p in ann_mask_dir.glob("*.png")} if ann_mask_dir.exists() else set()
+
     print(f"Sheet    : {sheet_id}")
     print(f"Strategy : {patch_size}px patch → {n_tiles}×{sub_size}px tiles (no downsampling)")
     print(f"Threshold: {threshold}  |  loss: {loss_type}")
-    print(f"Weights  : {weights_path.relative_to(repo_root)}\n")
+    print(f"Weights  : {weights_path.relative_to(repo_root)}")
+    if annotated:
+        print(f"Skipping : {len(annotated)} annotated patches (annotation mask used in stitch)")
+    print()
 
     model = build_model(sub_size, channels, loss_type)
     model.load_weights(str(weights_path))
     print("Model loaded.\n")
 
     patch_paths = sorted(patches_dir.glob("*.png"))
-    print(f"{len(patch_paths)} patches to process")
+    to_predict  = [p for p in patch_paths if p.stem not in annotated]
+    print(f"{len(patch_paths)} total patches  →  {len(to_predict)} to predict")
 
     failed = 0
-    for patch_path in tqdm(patch_paths, unit="patch"):
+    for patch_path in tqdm(to_predict, unit="patch"):
         try:
             grey = np.array(Image.open(patch_path).convert("L"), dtype=np.float32)
         except Exception as e:
@@ -142,10 +152,10 @@ def predict(sheet_id: str, repo_root: Path, weights_arg: str | None = None):
 
         tiles, positions = split_patch(grey, sub_size)
 
-        # Stack all 16 tiles into one batch — (16, 256, 256, 1), normalised
+        # Stack all tiles into one batch — (N, 256, 256, 1), normalised
         batch = np.stack([t[:, :, None] / 255.0 for t in tiles])
 
-        preds = model.predict(batch, verbose=0)  # (16, 256, 256, 1)
+        preds = model.predict(batch, verbose=0)  # (N, 256, 256, 1)
 
         pred_tiles = [(pred.squeeze() > threshold).astype(np.uint8) for pred in preds]
         full_mask  = assemble_patch(pred_tiles, positions, patch_size, sub_size)
@@ -154,7 +164,8 @@ def predict(sheet_id: str, repo_root: Path, weights_arg: str | None = None):
             out_dir / patch_path.name
         )
 
-    print(f"\nDone  ({len(patch_paths) - failed} saved, {failed} failed)")
+    saved = len(to_predict) - failed
+    print(f"\nDone  ({saved} predicted, {len(annotated)} annotation-only, {failed} failed)")
     print(f"  -> {out_dir}/")
     tf.keras.backend.clear_session()
 

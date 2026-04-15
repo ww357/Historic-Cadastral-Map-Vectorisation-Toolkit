@@ -25,13 +25,6 @@ unet:
   threshold: 0.95         # from threshold calibration on validation set
   batch_size: 4
 
-features:
-  boundaries: true   # U-Net: land parcel boundary lines
-  buildings: true    # MapSAM: building footprints
-  water: true        # MapSAM: water features
-  damage: false      # MapSAM: document damage areas
-  text: true         # MapTextPipeline: text regions
-
 vectorise:
   boundaries:
     simplify_tolerance: 2.0  # Douglas-Peucker tolerance in CRS units (metres for BNG,
@@ -39,16 +32,47 @@ vectorise:
     min_length: 10.0         # discard lines shorter than this (same units as above)
     topology_repair:
       enabled: false         # set true to add bridging segments after vectorisation
-      snap_distance: 3.0    # maximum gap to bridge in CRS units (metres for BNG)
+      snap_distance: 15.0    # maximum gap to bridge in CRS units (metres for BNG)
                              # keep conservative — start low and increase if needed
                              # a good starting point is 3–5× simplify_tolerance
       angle_tolerance: null  # degrees; null = bridge any nearby endpoint pair
                              # set e.g. 25 to restrict to roughly collinear lines only
                              # (avoids bridging two unrelated boundaries at a corner)
-  # Future feature sections follow the same pattern, e.g.:
-  # buildings:
-  #   simplify_tolerance: 1.0
-  #   min_area: 5.0
+  # MapSAM polygon features — any label becomes its own class
+  # Per-feature overrides take precedence; "default" is used when no specific entry exists.
+  features:
+    default:
+      simplify_tolerance: 2.0  # Douglas-Peucker tolerance in CRS units (metres for BNG)
+      min_area: 25.0            # discard polygons smaller than this (same units squared)
+    # Per-feature overrides — uncomment and adjust as needed:
+    # water:
+    #   simplify_tolerance: 3.0
+    #   min_area: 50.0
+    # building:
+    #   simplify_tolerance: 1.0
+    #   min_area: 10.0
+
+mapsam:
+  vit_name: vit_b
+  img_size: 512
+  num_classes: 1
+  rank: 4          # DoRA rank — must match the value used when base weights were trained
+  dice_param: 0.8       # weight for dice vs focal in combined loss (0.8 = 80% dice, 20% focal)
+  predict_threshold: 0.5  # sigmoid threshold for binary mask during inference
+  predict_batch_size: 4   # patches per GPU forward pass; reduce to 1-2 if OOM
+  # No per-feature configuration needed — the feature name is taken directly from the
+  # --feature CLI argument, and weights are resolved automatically in this order:
+  #   1. models/finetuned/  (mapsam_<feature>*_best.pth)
+  #   2. models/base/MapSAM/<feature>/  (feature-specific base weights)
+  #   3. models/base/MapSAM/origional_weights/  (generic SAM DoRA fallback)
+  # Annotation data is read from data/annotations/<feature>/<sheet>/
+  finetune:
+    epochs: 30
+    batch_size: 2            # safe for ~4 GB GPU with 512px SAM ViT-B; reduce to 1 if OOM
+    learning_rate: 0.0001    # much lower than base training (0.005) — small nudge to existing weights
+    val_split: 0.15
+    early_stopping_patience: 10
+    seed: 1234
 
 finetune:
   epochs: 50
@@ -60,17 +84,10 @@ finetune:
   # checkpoint_metric: path_f1  # always path_f1 — here for documentation only
 
 annotation:
-  # Labels the user types in labelme for each feature class.
-  # Anything not in this list is treated as a text annotation (label = the text content).
-  feature_labels:
-    - boundary
-    - water
-    - building
-    - damage
-  # Maps each label to its annotations subfolder
-  label_to_folder:
-    boundary: boundaries
-    water: water
-    building: buildings
-    damage: damage
+  # Every unique label drawn in labelme automatically becomes its own feature class.
+  # The label name is used directly as the annotations subfolder (e.g. "water" → annotations/water/).
+  #
+  # boundary_label identifies which label uses linestrip rendering instead of filled polygons.
+  # All other labels are rendered as filled polygons regardless of their shape_type.
+  boundary_label: boundary
   line_width: 3       # px width used when rendering linestrip annotations into masks
