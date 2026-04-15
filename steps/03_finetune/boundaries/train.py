@@ -33,9 +33,9 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
-from models.unet.architecture import build_model, LOSS_MAP, dsc, clDice, tp, tn, prec, recall
-from models.unet.augmentation import make_augmented_dataset
-from models.unet.metrics import compute_path_metrics, MENDING_C, MENDING_K
+from models.ImprovedLinearUNet.architecture import build_model, LOSS_MAP, dsc, clDice, tp, tn, prec, recall
+from models.ImprovedLinearUNet.augmentation import make_augmented_dataset
+from models.ImprovedLinearUNet.metrics import compute_path_metrics, MENDING_C, MENDING_K
 
 import tensorflow as tf
 from tensorflow.keras.optimizers import Adam

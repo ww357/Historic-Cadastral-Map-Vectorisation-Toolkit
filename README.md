@@ -7,7 +7,6 @@ Initial setup:
 conda env create -f envs/maptools.yml
 conda activate maptools
         #Not yet in envs: cond env create -f envs/tf-gpu.yml
-
 ```
 
 Running through the pipeline:
@@ -26,7 +25,45 @@ conda activate maptools
 python "steps/05_stitch/boundaries/stitch.py" --sheet Timberscombe
 python "steps/06_vectorise/boundaries/vectorise.py" --sheet Timberscombe
         #step/07_feedback
+```
 
+```python
+
+## Step 01 - Patchify
+# run this to interactively make mask of map area on a document 
+conda run -n maptools python "steps/01_ patchify/draw_mask.py" --sheet MapSheetName
+# then use the mask in patchify (or if this mask was made in another programme):
+conda run -n maptools python "steps/01_ patchify/patchify.py" --sheet MapSheetName --mask
+# slice GeoTIFF into 512px patches (drop --mask if no area mask)
+
+## Step 02 - Annotate
+conda run -n maptools python "steps/02_annotate/annotate.py" --sheet MapSheetName
+# open labelme to draw boundary lines and feature polygons
+conda run -n maptools python "steps/02_annotate/export_masks.py" --sheet MapSheetName
+# convert labelme JSON to binary mask PNGs per feature label
+
+## Step 03 - Fine-tune (Boundaries - U-Net)
+conda run -n tf-gpu python "steps/03_finetune/boundaries/train.py" --sheet MapSheetName --name v1
+# fine-tune boundary U-Net, checkpoints on path-F1
+
+## Step 03 - Fine-tune (Features - MapSAM)
+conda run -n MapSAM python "steps/03_finetune/MapSAM/train.py" --sheet MapSheetName --feature FeatureName
+# fine-tune SAM DoRA weights for one feature class (repeat per feature)
+
+## Step 04 - Predict
+conda run -n tf-gpu python "steps/04_predict/boundaries/predict.py" --sheet MapSheetName
+# run U-Net on all patches, skips manually annotated ones
+
+conda run -n MapSAM python "steps/04_predict/MapSAM/predict.py" --sheet MapSheetName --feature FeatureName
+# run MapSAM on all patches for one feature (repeat per feature)
+
+## Step 05 - Vectorise
+conda run -n maptools python "steps/05_vectorise/boundaries/vectorise.py" --sheet MapSheetName
+# stitch boundary patches + skeletonise → polylines → GeoPackage
+conda run -n maptools python "steps/05_vectorise/features/vectorise.py" --sheet MapSheetName --feature FeatureName
+# stitch feature patches + polygonise → polygons → GeoPackage (repeat per feature)
+
+# Output: data/outputs/MapSheetName.gpkg
 ```
 
 ## Acknowledgements

@@ -25,7 +25,7 @@ from tqdm import tqdm
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
-from models.unet.architecture import build_model
+from models.ImprovedLinearUNet.architecture import build_model
 
 
 def load_config() -> dict:
