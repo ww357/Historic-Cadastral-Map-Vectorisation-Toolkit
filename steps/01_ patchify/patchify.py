@@ -50,6 +50,7 @@ def patch_transform(base: Affine, col_off: int, row_off: int) -> Affine:
 def load_mask(mask_path: Path) -> np.ndarray:
     """Return a 2-D boolean array (True = inside map area)."""
     if mask_path.suffix.lower() == ".png":
+        Image.MAX_IMAGE_PIXELS = None   # large map masks exceed PIL's default 178 MP limit
         arr = np.array(Image.open(mask_path))
         if arr.ndim == 3:
             # Use alpha only if it actually encodes the mask (>1% transparent)

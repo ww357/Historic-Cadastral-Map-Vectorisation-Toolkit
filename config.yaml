@@ -91,3 +91,15 @@ annotation:
   # All other labels are rendered as filled polygons regardless of their shape_type.
   boundary_label: boundary
   line_width: 3       # px width used when rendering linestrip annotations into masks
+
+text:
+  # MapTextPipeline text spotting (run via MapReader's MapTextRunner)
+  # Requires the "New-MapReader" conda environment.
+  cfg_file: models/MapTextPipeline/configs/ViTAEv2_S/rumsey/final_rumsey.yaml
+  min_ioa: 0.7        # deduplication IoA threshold — higher = tighter (keeps more boxes)
+  device: default     # "cuda", "cpu", or "default" (auto-selects cuda if available)
+  # Confidence threshold is set in the config yaml above (TRANSFORMER.INFERENCE_TH_TEST: 0.4)
+  # Weight search order:
+  #   1. --weights CLI argument
+  #   2. models/base/MapTextPipeline/*.pth   (most recently modified)
+  #   3. models/finetuned/*text*.pth

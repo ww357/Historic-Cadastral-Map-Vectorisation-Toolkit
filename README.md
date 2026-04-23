@@ -10,23 +10,6 @@ conda activate maptools
 ```
 
 Running through the pipeline:
-
-```python
-# from repo root in WSL
-conda activate maptools
-python "steps/01_patchify/patchify.py" --sheet Timberscombe --mask # remove mask if no mask provided
-python "steps/02_annotate/annotate.py"  --sheet Timberscombe
-python "steps/02_annotate/export_masks.py"  --sheet Timberscombe
-conda activate tf-gpu
-python "steps/03_finetune/train.py" --sheet Timberscombe --name finetune_v1
-# auto — picks most recent *_best.weights.h5
-python "steps/04_predict/boundaries/predict.py" --sheet Timberscombe
-conda activate maptools
-python "steps/05_stitch/boundaries/stitch.py" --sheet Timberscombe
-python "steps/06_vectorise/boundaries/vectorise.py" --sheet Timberscombe
-        #step/07_feedback
-```
-
 ```python
 
 ## Step 01 - Patchify
@@ -43,11 +26,11 @@ conda run -n maptools python "steps/02_annotate/export_masks.py" --sheet MapShee
 # convert labelme JSON to binary mask PNGs per feature label
 
 ## Step 03 - Fine-tune (Boundaries - U-Net)
-conda run -n tf-gpu python "steps/03_finetune/boundaries/train.py" --sheet MapSheetName --name v1
+conda run -n tf-gpu python "steps/03_finetune/boundaries/train.py" --sheet MapSheetName --name map_v1
 # fine-tune boundary U-Net, checkpoints on path-F1
 
 ## Step 03 - Fine-tune (Features - MapSAM)
-conda run -n MapSAM python "steps/03_finetune/MapSAM/train.py" --sheet MapSheetName --feature FeatureName
+conda run -n MapSAM python "steps/03_finetune/MapSAM/train.py" --sheet MapSheetName --feature FeatureName --name map_v1 #CHECK THIS NAME FLAG STILL WORKS!
 # fine-tune SAM DoRA weights for one feature class (repeat per feature)
 
 ## Step 04 - Predict
@@ -62,6 +45,13 @@ conda run -n maptools python "steps/05_vectorise/boundaries/vectorise.py" --shee
 # stitch boundary patches + skeletonise → polylines → GeoPackage
 conda run -n maptools python "steps/05_vectorise/features/vectorise.py" --sheet MapSheetName --feature FeatureName
 # stitch feature patches + polygonise → polygons → GeoPackage (repeat per feature)
+
+## Step 06 - Text
+conda activate New-MapReader
+python "steps/06_text/predict.py" --sheet MapSheetName
+conda activate maptools
+python "steps/06_text/fix_text_layer.py" --sheet MapSheetName
+
 
 # Output: data/outputs/MapSheetName.gpkg
 ```
