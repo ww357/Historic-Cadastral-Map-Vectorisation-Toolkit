@@ -222,13 +222,32 @@ def _add_raster_layer(stitched_path: Path, gpkg_path: Path, layer_name: str):
 
 
 def _write_patch_grid(gpkg_path: Path, meta_path: Path, transform,
-                      crs, has_georef: bool, sheet_id: str):
-    """Write a Patch_Grid layer once per sheet — skipped if already present."""
-    if _layer_exists(gpkg_path, "Patch_Grid"):
-        return
+                      crs, has_georef: bool, sheet_id: str, cfg: dict):
+    """
+    Rebuild the Patch_Grid layer every run so annotation columns stay current.
+
+    Attribute columns:
+      patch_id           — unique patch identifier
+      sheet_id           — parent sheet name
+      ann_<feature>      — True if an annotation mask exists for that feature/patch
+      annotated_features — comma-separated list of annotated features (empty = all predicted)
+    """
+    _drop_vector_layer(gpkg_path, "Patch_Grid")
     if not meta_path.exists():
         print("  Patch_Grid: metadata CSV not found — skipping.")
         return
+
+    # Discover which features have annotation masks for this sheet
+    ann_root = ROOT / cfg["paths"]["annotations"]
+    feature_mask_dirs: dict[str, Path] = {}
+    if ann_root.exists():
+        for feat_dir in sorted(ann_root.iterdir()):
+            if not feat_dir.is_dir():
+                continue
+            mask_dir = feat_dir / sheet_id / "masks"
+            if mask_dir.exists():
+                feature_mask_dirs[feat_dir.name] = mask_dir
+
     meta = pd.read_csv(meta_path)
     rectangles = []
     for _, row in meta.iterrows():
@@ -239,11 +258,25 @@ def _write_patch_grid(gpkg_path: Path, meta_path: Path, transform,
             geom = box(min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
         else:
             geom = box(c, r, c + pw, r + ph)
-        rectangles.append({"patch_id": row.patch_id, "sheet_id": sheet_id, "geometry": geom})
+
+        rec = {"patch_id": row.patch_id, "sheet_id": sheet_id, "geometry": geom}
+
+        annotated = []
+        for feature, mask_dir in feature_mask_dirs.items():
+            has_ann = (mask_dir / f"{row.patch_id}.png").exists()
+            rec[f"ann_{feature}"] = has_ann
+            if has_ann:
+                annotated.append(feature)
+
+        rec["annotated_features"] = ", ".join(annotated)
+        rectangles.append(rec)
+
     grid_gdf = gpd.GeoDataFrame(rectangles, crs=crs if has_georef else None)
     write_mode = "a" if gpkg_path.exists() else "w"
     grid_gdf.to_file(gpkg_path, driver="GPKG", layer="Patch_Grid", mode=write_mode)
-    print(f"  Patch_Grid (vector):  {len(grid_gdf):,} patches")
+    ann_cols = [f"ann_{f}" for f in feature_mask_dirs] or ["(none)"]
+    print(f"  Patch_Grid (vector):  {len(grid_gdf):,} patches  |  "
+          f"annotation columns: {', '.join(ann_cols)}")
 
 
 # ---------------------------------------------------------------------------
@@ -322,7 +355,7 @@ def vectorise(sheet_id: str, feature: str, cfg: dict, stitched_path: Path, geore
     _add_raster_layer(stitched_path, out_path, raster_layer)
     print(f"  {raster_layer} (raster): done")
 
-    _write_patch_grid(out_path, meta_path, transform, crs, has_georef, sheet_id)
+    _write_patch_grid(out_path, meta_path, transform, crs, has_georef, sheet_id, cfg)
 
 
 # ---------------------------------------------------------------------------

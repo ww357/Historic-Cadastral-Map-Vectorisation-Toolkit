@@ -7,6 +7,7 @@ Initial setup:
 conda env create -f envs/maptools.yml
 conda activate maptools
         #Not yet in envs: cond env create -f envs/tf-gpu.yml
+        #Not yet in envs: cond env create -f envs/New-MapReader.yml
 ```
 
 Running through the pipeline:
