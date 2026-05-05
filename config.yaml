@@ -96,6 +96,10 @@ text:
   # MapTextPipeline text spotting (run via MapReader's MapTextRunner)
   # Requires the "New-MapReader" conda environment.
   cfg_file: models/MapTextPipeline/configs/ViTAEv2_S/rumsey/final_rumsey.yaml
+  tile_n: 1           # assemble tile_n × tile_n patches into one image before inference.
+                      # tile_n=1 means one forward pass per patch (recommended for ≤8GB VRAM).
+                      # tile_n=2 gives ~3-4× throughput but requires ~16GB VRAM for 1024px tiles
+                      # — the RTX 3050 (4GB) OOMs at tile_n=2. Leave at 1 for this GPU.
   min_ioa: 0.7        # deduplication IoA threshold — higher = tighter (keeps more boxes)
   device: default     # "cuda", "cpu", or "default" (auto-selects cuda if available)
   # Confidence threshold is set in the config yaml above (TRANSFORMER.INFERENCE_TH_TEST: 0.4)
