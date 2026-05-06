@@ -1,0 +1,56 @@
+# tf-gpu-base — portable minimal spec for TensorFlow GPU (U-Net boundary model)
+# For exact reproduction on linux-64 + CUDA 12.x: use tf-gpu.yml instead.
+# This file is a starting point for adapting to different machines/CUDA versions.
+#
+# GPU required: CUDA 12.x (CUDA is delivered via pip nvidia-* wheels — no conda
+#               CUDA channel needed). Tested on driver 581.95, RTX 3050 4GB.
+# For older GPUs (CUDA 11.x), use tensorflow==2.13 or 2.14 with the matching
+# nvidia-* cu11 wheels instead.
+#
+# numpy is pinned to <2.0 — TensorFlow 2.x is not compatible with numpy 2.x.
+
+name: tf-gpu
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  # Qt / display (needed for matplotlib GUI backend in some workflows)
+  - pyqt>=6.5
+  - pip:
+      # TensorFlow — pip wheels bundle CUDA via nvidia-* dependencies automatically
+      - tensorflow==2.21.0
+      - keras>=3.10
+      # numpy pinned — TF 2.x incompatible with numpy 2.x
+      - "numpy>=1.24,<2.0"
+      # Geospatial
+      - geopandas>=1.0
+      - rasterio>=1.4
+      - shapely>=2.0
+      - pyproj>=3.6
+      - pyogrio>=0.7
+      # Image / science
+      - scikit-image>=0.21
+      - scikit-learn>=1.3
+      - scipy>=1.10
+      - opencv-python>=4.8
+      - pillow>=10.0
+      - imageio>=2.28
+      - tifffile>=2023.0
+      # Data
+      - pandas>=2.0
+      - pyyaml
+      - h5py>=3.10        # Keras model checkpointing
+      - patchify>=0.2     # patch/stitch utility
+      # Visualisation
+      - matplotlib>=3.7
+      # Utilities
+      - tqdm
+      - requests
+      - rich
+      - joblib
+      - threadpoolctl
+      - networkx
+      # Jupyter (optional — for interactive exploration)
+      - ipykernel

@@ -1,0 +1,58 @@
+# MapSAM-base — portable minimal spec for MapSAM (SAM ViT-B + DoRA fine-tuning)
+# For exact reproduction on linux-64 + CUDA 11.1: use MapSAM.yml instead.
+# This file is a starting point for adapting to different machines/CUDA versions.
+#
+# GPU required: CUDA 11.1+ (tested on driver 581.95, RTX 3050 4GB)
+# Python 3.8 is REQUIRED — monai 1.1.0, scipy 1.7.3, and the MapSAM model code
+# are not compatible with Python 3.9+ without modification.
+#
+# IMPORTANT — legacy PyTorch wheel:
+#   torch==1.9.1+cu111 is a very old build. Install from the legacy index:
+#     pip install torch==1.9.1+cu111 torchvision==0.10.1+cu111
+#           --index-url https://download.pytorch.org/whl/cu111
+#   If cu111 wheels are unavailable for your setup, the closest working
+#   alternative is torch==1.13.x+cu117 — but this requires testing MapSAM
+#   model compatibility before use.
+#
+# numpy is pinned to <1.25 — scipy 1.7.3 and older MONAI versions break with
+# newer numpy. The exact pinned version is 1.21.6.
+
+name: MapSAM
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.8
+  - pip
+  - pip:
+      # PyTorch — legacy CUDA 11.1 wheels (see note above)
+      - torch==1.9.1+cu111
+          --index-url https://download.pytorch.org/whl/cu111
+      - torchvision==0.10.1+cu111
+          --index-url https://download.pytorch.org/whl/cu111
+      # numpy strictly pinned — required by scipy 1.7.x and monai 1.1.0
+      - "numpy>=1.21,<1.25"
+      # Medical / SAM ecosystem
+      - monai==1.1.0          # pinned — MapSAM model code targets this API
+      - einops>=0.6
+      - simpleitk>=2.2
+      - nibabel>=4.0
+      # ONNX
+      - onnx>=1.13
+      - onnxruntime>=1.14
+      # Utilities
+      - scipy==1.7.3          # pinned — newer versions break with numpy<1.25
+      - scikit-learn>=1.0
+      - opencv-python>=4.5
+      - pillow>=9.0,<11.0     # avoid numpy 2.x incompatibility in older imageio
+      - imageio>=2.10
+      - matplotlib>=3.5
+      - pandas>=1.5,<3.0
+      - pyyaml
+      - tqdm
+      - safetensors>=0.3
+      - pycocotools>=2.0
+      - tensorboardx>=2.5
+      - ml-collections>=0.1
+      # Jupyter (optional)
+      - ipykernel
