@@ -65,3 +65,22 @@ The boundary U-Net architecture is based on:
 > *ISPRS International Journal of Geo-Information*, 11(8), 439.
 > https://doi.org/10.3390/ijgi11080439
 > GitHub: https://github.com/FutureuserR/Raster-Map
+
+**MapSAM** — feature segmentation model used for buildings, water, and other polygon features.
+
+> Xue Xia, Daiwei Zhang, Wenxuan Song, Wei Huang, Lorenz Hurni.
+> *MapSAM: Adapting Segment Anything Model for Automated Feature Detection in Historical Maps.*
+> https://github.com/xiaxue-ethz/MapSAM
+
+**MapTextPipeline** — text detection and recognition pipeline used in step 06.
+
+> Based on DNTextSpotter: Yu Xie et al.
+> *DNTextSpotter: Arbitrary-Shaped Scene Text Spotting via Improved Denoising Training.*
+> arXiv:2408.00355 (2024). https://github.com/yyyyyxie/DNTextSpotter
+>
+> MapText fork (maps-as-data): https://github.com/maps-as-data/MapTextPipeline
+
+**MapReader** — map patch management and MapTextPipeline runner used in step 06.
+
+> maps-as-data / The Alan Turing Institute.
+> https://github.com/maps-as-data/MapReader
