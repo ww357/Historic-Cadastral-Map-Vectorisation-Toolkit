@@ -1,10 +1,15 @@
 """
 Slice a georeferenced map sheet into 512px PNG patches.
 
-With --mask, only patches that overlap the map-area mask by at least
-min_mask_coverage (config.yaml) are saved. All spatial metadata needed
-for stitching predictions back into a full-document raster is written
-to a CSV alongside the patches.
+A map-area mask is applied automatically if one is found in
+data/map_area_masks/<SHEET_ID>/ (.png, .tif, or .tiff). Only patches that
+overlap the mask by at least min_mask_coverage (config.yaml) are then saved.
+
+Use --mask to require a mask and exit with an error if none is found.
+Omit --mask to apply the mask when present and proceed without it when absent.
+
+All spatial metadata needed for stitching predictions back into a full-document
+raster is written to a CSV alongside the patches.
 
 Usage:
     python patchify.py --sheet SHEET_ID [--mask]
@@ -78,7 +83,7 @@ def to_pil(data: np.ndarray) -> Image.Image:
     return Image.fromarray(np.moveaxis(data, 0, -1))
 
 
-def patchify(sheet_id: str, use_mask: bool, repo_root: Path):
+def patchify(sheet_id: str, require_mask: bool, repo_root: Path):
     cfg = load_config(repo_root)
     pc = cfg["patchify"]
     size, overlap, min_cov, pad = (
@@ -97,8 +102,10 @@ def patchify(sheet_id: str, use_mask: bool, repo_root: Path):
         sys.exit(f"Raw map not found: {raw_path}")
 
     mask_path = find_mask(mask_dir, sheet_id)
-    if use_mask and mask_path is None:
+    if require_mask and mask_path is None:
         sys.exit(f"No mask found for '{sheet_id}' in {mask_dir} (.png/.tif/.tiff)")
+
+    use_mask = mask_path is not None
 
     out_imgs.mkdir(parents=True, exist_ok=True)
     out_meta.mkdir(parents=True, exist_ok=True)
@@ -114,7 +121,11 @@ def patchify(sheet_id: str, use_mask: bool, repo_root: Path):
 
         print(f"Sheet : {sheet_id}  |  {img_w}x{img_h}px  |  {src.count} band(s)")
         print(f"CRS   : {crs or 'none'}")
-        print(f"Params: size={size}px  overlap={overlap}px  mask={'yes' if use_mask else 'no'}")
+        if use_mask:
+            mask_source = "required (--mask)" if require_mask else "auto-detected"
+        else:
+            mask_source = "none found"
+        print(f"Params: size={size}px  overlap={overlap}px  mask={mask_source}")
 
         mask_arr = None
         if use_mask:
@@ -172,7 +183,11 @@ def patchify(sheet_id: str, use_mask: bool, repo_root: Path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Patchify a map sheet into 512px PNG tiles.")
     parser.add_argument("--sheet", required=True, help="Sheet ID (subfolder name under data/raw/)")
-    parser.add_argument("--mask", action="store_true", help="Skip patches outside the map-area mask")
+    parser.add_argument(
+        "--mask", action="store_true",
+        help="Require a map-area mask and exit if none is found. "
+             "Without this flag a mask is still used automatically if one exists.",
+    )
     args = parser.parse_args()
 
     patchify(args.sheet, args.mask, Path(__file__).resolve().parents[2])
