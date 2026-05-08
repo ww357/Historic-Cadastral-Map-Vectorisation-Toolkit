@@ -14,11 +14,12 @@ Running through the pipeline:
 ```python
 
 ## Step 01 - Patchify
-# run this to interactively make mask of map area on a document 
+
 conda run -n maptools python "steps/01_ patchify/draw_mask.py" --sheet MapSheetName
-# then use the mask in patchify (or if this mask was made in another programme):
-conda run -n maptools python "steps/01_ patchify/patchify.py" --sheet MapSheetName --mask
-# slice GeoTIFF into 512px patches (drop --mask if no area mask)
+# run this to interactively make mask of map area on the document if necessary 
+# to reduce patches for inference (or this mask can be made in another programme):
+conda run -n maptools python "steps/01_ patchify/patchify.py" --sheet MapSheetName
+# slice GeoTIFF into 512px patches (use --mask flag if no mask is auto-found)
 
 ## Step 02 - Annotate
 conda run -n maptools python "steps/02_annotate/annotate.py" --sheet MapSheetName
