@@ -8,8 +8,15 @@ Each 512px patch is split into a 2×2 grid of 256px sub-patches (4 total),
 matching the model's training resolution exactly — no downsampling. Predictions
 are reassembled into a 512px output mask aligned with the metadata CSV.
 
+Weight search order:
+  1. --weights CLI argument (explicit path)
+  2. models/finetuned/working/<SHEET_ID>_best.weights.h5  (sheet-specific finetune)
+  3. Most recently modified feedback_v* in models/finetuned/iterative/
+  4. Most recently modified *.weights.h5 in models/base/ (recursive)
+
 Usage:
-    python predict.py --sheet SHEET_ID
+    conda activate tf-gpu
+    python steps/04_predict/boundaries/predict.py --sheet SHEET_ID
 """
 
 import argparse
@@ -55,12 +62,17 @@ def assemble_patch(tiles: list[np.ndarray], positions: list[tuple],
     return out
 
 
-def resolve_weights(weights_arg: str | None, repo_root: Path, paths_cfg: dict) -> Path:
+def resolve_weights(
+    weights_arg: str | None,
+    sheet_id: str,
+    repo_root: Path,
+    paths_cfg: dict,
+) -> Path:
     """
     Find weights to use. Search order:
       1. --weights CLI argument (explicit path)
-      2. Most recently modified *_best.weights.h5 in models/finetuned/
-      3. models/finetuned/model_weights.weights.h5
+      2. models/finetuned/working/<SHEET_ID>_best.weights.h5
+      3. Most recently modified feedback_v* in models/finetuned/iterative/
       4. Most recently modified *.weights.h5 in models/base/ (recursive)
     """
     if weights_arg:
@@ -72,30 +84,38 @@ def resolve_weights(weights_arg: str | None, repo_root: Path, paths_cfg: dict) -
         sys.exit(f"Weights not found: {p}")
 
     finetuned_dir = repo_root / paths_cfg["models_finetuned"]
+    working_dir   = finetuned_dir / "working"
+    iterative_dir = finetuned_dir / "iterative"
     base_dir      = repo_root / paths_cfg["models_base"]
 
-    # Most recent fine-tune checkpoint
-    candidates = sorted(finetuned_dir.rglob("*_best.weights.h5"),
-                        key=lambda p: p.stat().st_mtime)
-    if candidates:
-        return candidates[-1]
+    # Sheet-specific working weights (step 03 output for this sheet)
+    working = working_dir / f"{sheet_id}_best.weights.h5"
+    if working.exists():
+        return working
 
-    # Explicit named file in finetuned dir
-    named = finetuned_dir / "model_weights.weights.h5"
-    if named.exists():
-        return named
+    # Most recent iterative feedback weights (step 07 output)
+    if iterative_dir.exists():
+        candidates = sorted(
+            iterative_dir.glob("feedback_v*_best.weights.h5"),
+            key=lambda p: p.stat().st_mtime,
+        )
+        if candidates:
+            return candidates[-1]
 
     # Fall back to base weights
-    candidates = sorted(base_dir.rglob("*.weights.h5"),
-                        key=lambda p: p.stat().st_mtime)
-    if candidates:
-        return candidates[-1]
+    base_candidates = sorted(
+        base_dir.rglob("*.weights.h5"),
+        key=lambda p: p.stat().st_mtime,
+    )
+    if base_candidates:
+        return base_candidates[-1]
 
     sys.exit(
         f"No weights found. Searched:\n"
-        f"  {finetuned_dir} (*_best.weights.h5)\n"
-        f"  {base_dir} (*.weights.h5)\n"
-        "Pass --weights <path> to specify a file explicitly."
+        f"  {working}  (sheet working weights)\n"
+        f"  {iterative_dir}  (feedback_v*_best.weights.h5)\n"
+        f"  {base_dir}  (*.weights.h5 recursive)\n"
+        "Pass --weights <path> to specify a file explicitly, or run step 03 first."
     )
 
 
@@ -112,7 +132,7 @@ def predict(sheet_id: str, repo_root: Path, weights_arg: str | None = None):
 
     patches_dir  = repo_root / cfg["paths"]["patches"] / "images" / sheet_id
     out_dir      = repo_root / cfg["paths"]["predictions"] / "boundaries" / sheet_id
-    weights_path = resolve_weights(weights_arg, repo_root, cfg["paths"])
+    weights_path = resolve_weights(weights_arg, sheet_id, repo_root, cfg["paths"])
 
     if not patches_dir.exists():
         sys.exit(f"Patches not found: {patches_dir}  — run 01_patchify first.")
@@ -125,10 +145,19 @@ def predict(sheet_id: str, repo_root: Path, weights_arg: str | None = None):
     ann_mask_dir   = repo_root / cfg["paths"]["annotations"] / boundary_label / sheet_id / "masks"
     annotated      = {p.stem for p in ann_mask_dir.glob("*.png")} if ann_mask_dir.exists() else set()
 
+    # Label the weights source for clarity
+    wp = weights_path.relative_to(repo_root)
+    if "working" in weights_path.parts:
+        weight_source = "sheet finetune (working)"
+    elif "iterative" in weights_path.parts:
+        weight_source = "feedback iterative"
+    else:
+        weight_source = "base"
+
     print(f"Sheet    : {sheet_id}")
     print(f"Strategy : {patch_size}px patch → {n_tiles}×{sub_size}px tiles (no downsampling)")
     print(f"Threshold: {threshold}  |  loss: {loss_type}")
-    print(f"Weights  : {weights_path.relative_to(repo_root)}")
+    print(f"Weights  : {wp}  [{weight_source}]")
     if annotated:
         print(f"Skipping : {len(annotated)} annotated patches (annotation mask used in stitch)")
     print()
@@ -174,6 +203,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run boundary U-Net on patchified map sheet.")
     parser.add_argument("--sheet",   required=True, help="Sheet ID")
     parser.add_argument("--weights", default=None,
-                        help="Path to weights file (default: auto-selects most recent fine-tune)")
+                        help="Path to weights file (default: auto-selects by search order)")
     args = parser.parse_args()
     predict(args.sheet, ROOT, args.weights)
