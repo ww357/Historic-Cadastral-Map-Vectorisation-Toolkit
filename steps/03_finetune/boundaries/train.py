@@ -1,29 +1,37 @@
 """
-Fine-tune the boundary U-Net on labelme-annotated patches.
+Fine-tune the boundary U-Net on labelme-annotated patches for a single sheet.
+
+Weight search order (starting weights):
+  1. --weights CLI argument (explicit path)
+  2. Most recently modified feedback_v* in models/finetuned/iterative/
+  3. Most recently modified *.weights.h5 in models/base/ (recursive)
+
+Output weights are saved to models/finetuned/working/<SHEET_ID>_best.weights.h5
+and overwrite any previous fine-tune for that sheet.  These working weights are
+sheet-specific and temporary — they exist to produce the best possible predictions
+for this sheet.  Step 07 feedback fine-tuning starts from the iterative/ weights,
+not from these.
 
 Usage
 -----
-    python train.py                               # uses config.yaml defaults
-    python train.py --weights base.weights.h5     # fine-tune from specific weights
-    python train.py --name finetune_v1            # tag the run
+    conda activate tf-gpu
+    python steps/03_finetune/boundaries/train.py --sheet SHEET_ID
 
 Data expected
 -------------
-    data/patches/           PNG patches from step 01_patchify
-    data/annotations/<boundary_label>/   binary mask PNGs from step 02_annotate/export_masks.py
-                                         boundary_label is set in config.yaml (default: "boundary")
-    File names must match (e.g. patch_0000.png in both folders).
+    data/patches/images/<SHEET_ID>/          PNG patches from step 01_patchify
+    data/annotations/<boundary_label>/<SHEET_ID>/masks/
+                                             binary mask PNGs from step 02_annotate/export_masks.py
 
 Outputs
 -------
-    models/finetuned/unet_boundaries_{name}_best.weights.h5   — best weights by path_f1
-    models/logs/{name}_metrics.csv            — per-epoch metrics
+    models/finetuned/working/<SHEET_ID>_best.weights.h5   — best weights by path_f1
+    models/logs/<SHEET_ID>_finetune_metrics.csv           — per-epoch metrics
 """
 
 import argparse
 import csv
 import sys
-from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -172,15 +180,13 @@ class PathMetricsCallback(tf.keras.callbacks.Callback):
 # ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="Fine-tune boundary U-Net")
+    parser = argparse.ArgumentParser(description="Fine-tune boundary U-Net for a single sheet")
+    parser.add_argument("--sheet",   required=True,
+                        help="Map sheet name (subdirectory under patches/images/ and annotations/)")
     parser.add_argument("--config",  default="config.yaml",
                         help="Path to config.yaml (default: config.yaml)")
     parser.add_argument("--weights", default=None,
-                        help="Base weights file to fine-tune from")
-    parser.add_argument("--name",    default=None,
-                        help="Run name for checkpoint and log files")
-    parser.add_argument("--sheet",   default=None,
-                        help="Map sheet name (subdirectory under patches/images/ and annotations/)")
+                        help="Explicit starting weights path (overrides auto-selection)")
     args = parser.parse_args()
 
     cfg          = yaml.safe_load((ROOT / args.config).read_text())
@@ -189,10 +195,8 @@ def main():
     paths_cfg    = cfg["paths"]
 
     boundary_label = cfg["annotation"].get("boundary_label", "boundary")
-    patches_base   = ROOT / paths_cfg["patches"] / "images"
-    patches_dir    = patches_base / args.sheet if args.sheet else patches_base
-    masks_base     = ROOT / paths_cfg["annotations"] / boundary_label
-    masks_dir      = (masks_base / args.sheet / "masks") if args.sheet else masks_base
+    patches_dir    = ROOT / paths_cfg["patches"] / "images" / args.sheet
+    masks_dir      = ROOT / paths_cfg["annotations"] / boundary_label / args.sheet / "masks"
 
     # Auto-export masks from labelme JSON if not yet done
     if not masks_dir.exists() or not any(masks_dir.glob("*.png")):
@@ -208,15 +212,17 @@ def main():
         if result.returncode != 0:
             sys.exit("export_masks.py failed — check your annotations and try again.")
         print()
-    weights_dir  = ROOT / paths_cfg["models_finetuned"]
-    logs_dir     = ROOT / paths_cfg["logs"]
-    weights_dir.mkdir(parents=True, exist_ok=True)
+
+    working_dir   = ROOT / paths_cfg["models_finetuned"] / "working"
+    iterative_dir = ROOT / paths_cfg["models_finetuned"] / "iterative"
+    logs_dir      = ROOT / paths_cfg["logs"]
+    working_dir.mkdir(parents=True, exist_ok=True)
     logs_dir.mkdir(parents=True, exist_ok=True)
 
-    run_name = args.name or datetime.now().strftime("unet_boundaries_%Y%m%d_%H%M")
     tile_size = unet_cfg["inference_size"]
 
     # ---- Load data ---------------------------------------------------------
+    print(f"Sheet: {args.sheet}")
     print("Loading patches...")
     all_records = load_patch_tiles(patches_dir, masks_dir, tile_size)
     if not all_records:
@@ -224,8 +230,7 @@ def main():
             f"No paired patches found.\n"
             f"  Patches: {patches_dir}\n"
             f"  Masks:   {masks_dir}\n"
-            + ("" if args.sheet else "Tip: use --sheet <name> to target a specific map sheet.\n")
-            + "Check paths.patches and paths.annotations in config.yaml."
+            "Check paths.patches and paths.annotations in config.yaml."
         )
 
     # Split by patch name — all tiles from a patch stay in the same split
@@ -259,28 +264,37 @@ def main():
         metrics   = [dsc, clDice, tp, tn, prec, recall],
     )
 
-    # Load base weights — search order:
+    # ---- Load starting weights ---------------------------------------------
+    # Search order:
     #   1. --weights CLI argument (explicit path)
-    #   2. Most recent file in models/base/
-    #   3. models/finetuned/model_weights.weights.h5
-    base_weights = args.weights
-    if base_weights is None:
-        candidates = sorted((ROOT / paths_cfg["models_base"]).rglob("*.weights.h5"))
+    #   2. Most recently modified feedback_v* in models/finetuned/iterative/
+    #   3. Most recently modified *.weights.h5 in models/base/ (recursive)
+    start_weights = args.weights
+    if start_weights is None and iterative_dir.exists():
+        candidates = sorted(
+            iterative_dir.glob("feedback_v*_best.weights.h5"),
+            key=lambda p: p.stat().st_mtime,
+        )
         if candidates:
-            base_weights = str(candidates[-1])
-    if base_weights is None:
-        fallback = ROOT / paths_cfg["models_finetuned"] / "model_weights.weights.h5"
-        if fallback.exists():
-            base_weights = str(fallback)
+            start_weights = str(candidates[-1])
+    if start_weights is None:
+        base_candidates = sorted(
+            (ROOT / paths_cfg["models_base"]).rglob("*.weights.h5"),
+            key=lambda p: p.stat().st_mtime,
+        )
+        if base_candidates:
+            start_weights = str(base_candidates[-1])
 
-    if base_weights and Path(base_weights).exists():
-        model.load_weights(base_weights)
-        print(f"Loaded base weights: {base_weights}")
+    if start_weights and Path(start_weights).exists():
+        model.load_weights(start_weights)
+        p = Path(start_weights)
+        source = "iterative" if "iterative" in p.parts else "base"
+        print(f"Starting weights [{source}]: {p.name}")
     else:
-        print("No base weights found — training from scratch")
-        print(f"  Searched: {ROOT / paths_cfg['models_base']}")
-        print(f"  Searched: {ROOT / paths_cfg['models_finetuned'] / 'model_weights.weights.h5'}")
-        print("  Pass --weights <path> to specify a weights file explicitly.")
+        print("No starting weights found — training from scratch")
+        print(f"  Searched: {iterative_dir}  (feedback_v*_best.weights.h5)")
+        print(f"  Searched: {ROOT / paths_cfg['models_base']}  (*.weights.h5)")
+        print("  Pass --weights <path> to specify a file explicitly.")
 
     # ---- Dataset -----------------------------------------------------------
     train_ds = make_augmented_dataset(
@@ -291,8 +305,8 @@ def main():
     )
 
     # ---- Callbacks ---------------------------------------------------------
-    best_path = weights_dir / f"{run_name}_best.weights.h5"
-    log_path  = logs_dir    / f"{run_name}_metrics.csv"
+    best_path = working_dir / f"{args.sheet}_best.weights.h5"
+    log_path  = logs_dir    / f"{args.sheet}_finetune_metrics.csv"
 
     callbacks = [
         PathMetricsCallback(
@@ -310,9 +324,8 @@ def main():
     ]
 
     # ---- Train -------------------------------------------------------------
-    print(f"\nRun: {run_name}")
-    print(f"Best weights → {best_path}")
-    print(f"Metrics log  → {log_path}\n")
+    print(f"\nBest weights → {best_path.relative_to(ROOT)}")
+    print(f"Metrics log  → {log_path.relative_to(ROOT)}\n")
 
     model.fit(
         train_ds,
@@ -322,6 +335,13 @@ def main():
     )
 
     print(f"\nDone. Best path_f1={callbacks[0].best_f1:.4f}")
+    print(f"Weights saved → {best_path.relative_to(ROOT)}")
+    print(
+        f"\nNext step: run prediction then mend in QGIS, then run step 07 feedback:\n"
+        f"  python steps/04_predict/boundaries/predict.py --sheet {args.sheet}\n"
+        f"  python steps/07_feedback/boundaries/rasterise.py --sheet {args.sheet}\n"
+        f"  python steps/07_feedback/boundaries/train.py --sheet {args.sheet}"
+    )
 
 
 if __name__ == "__main__":

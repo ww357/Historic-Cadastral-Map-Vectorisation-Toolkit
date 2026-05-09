@@ -1,16 +1,21 @@
 """
-Compare boundary U-Net weight files on an annotated evaluation set.
+Compare boundary U-Net iterative weight files on the full annotated evaluation set.
+
+Evaluates all feedback_v* weight files in models/finetuned/iterative/ and ranks
+them by path_f1.  Use this to decide which feedback iteration is best before
+promoting weights or continuing training.
 
 Usage
 -----
-    python evaluate.py                              # all weights in models/finetuned/ + models/base/
-    python evaluate.py --weights-dir models/base/   # specific directory
-    python evaluate.py --data-dir data/annotations/ # override annotation directory
+    conda activate tf-gpu
+    python steps/03_finetune/boundaries/evaluate.py
+    python steps/03_finetune/boundaries/evaluate.py --weights-dir models/finetuned/working/
+    python steps/03_finetune/boundaries/evaluate.py --data-dir data/annotations/
 
 Output
 ------
   Terminal table sorted by path_f1 (best first)
-  models/finetuned/evaluation_results.csv
+  models/finetuned/iterative/evaluation_results.csv
 
 Note on Est. Mending Time
   Uses log-linear fit: mending_time = 0.3421 * APL^0.647   R²=0.317
@@ -36,7 +41,7 @@ import tensorflow as tf
 
 
 # ---------------------------------------------------------------------------
-# Data loading  (shared logic with train.py)
+# Data loading
 # ---------------------------------------------------------------------------
 
 def load_eval_tiles(patches_root: Path, masks_root: Path, tile_size: int):
@@ -47,7 +52,6 @@ def load_eval_tiles(patches_root: Path, masks_root: Path, tile_size: int):
     patches_root : data/patches/images/          — walks <sheet>/<patch>.png
     masks_root   : data/annotations/<label>/     — walks <sheet>/masks/<patch>.png
     """
-    # Build a stem → mask_path lookup from all masks found under masks_root
     mask_lookup = {p.stem: p for p in masks_root.rglob("masks/*.png")}
 
     tiles = []
@@ -107,7 +111,7 @@ def print_table(results: list[dict]):
              "apl_total_px", "fn_total_px", "fp_total_px", "est_mending_time"]
     heads = ["Weights", "F1", "Recall", "Prec",
              "APL (px)", "FN (px)", "FP (px)", "Est.Time (min)"]
-    widths = [38, 7, 8, 7, 10, 9, 9, 15]
+    widths = [42, 7, 8, 7, 10, 9, 9, 15]
 
     sep = "  ".join("-" * w for w in widths)
     hdr = "  ".join(h.ljust(w) for h, w in zip(heads, widths))
@@ -126,10 +130,13 @@ def print_table(results: list[dict]):
 # ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="Compare boundary U-Net weight files")
+    parser = argparse.ArgumentParser(
+        description="Evaluate iterative boundary U-Net weight files"
+    )
     parser.add_argument("--config",      default="config.yaml")
     parser.add_argument("--weights-dir", default=None,
-                        help="Directory to scan for .weights.h5 files")
+                        help="Directory to scan for .weights.h5 files "
+                             "(default: models/finetuned/iterative/)")
     parser.add_argument("--data-dir",    default=None,
                         help="Annotations root (overrides paths.annotations in config)")
     args = parser.parse_args()
@@ -144,23 +151,28 @@ def main():
     patches_dir    = ROOT / paths_cfg["patches"] / "images"
     masks_dir      = ROOT / (args.data_dir or paths_cfg["annotations"]) / boundary_label
 
-    # Collect weight files from base + finetuned dirs (or override)
+    iterative_dir = ROOT / paths_cfg["models_finetuned"] / "iterative"
+
+    # Collect weight files — iterative/ by default, or explicit override
     if args.weights_dir:
-        search_dirs = [ROOT / args.weights_dir]
+        search_dir = ROOT / args.weights_dir
     else:
-        search_dirs = [
-            ROOT / paths_cfg["models_base"],
-            ROOT / paths_cfg["models_finetuned"],
-        ]
+        search_dir = iterative_dir
 
-    weight_files = []
-    for d in search_dirs:
-        if d.exists():
-            weight_files += sorted(d.glob("*.weights.h5"))
-            weight_files += sorted(d.glob("*.h5"))
+    if not search_dir.exists():
+        sys.exit(
+            f"No weight directory found at {search_dir}\n"
+            "Run step 07 feedback training first to generate iterative weights."
+        )
 
+    weight_files = sorted(search_dir.glob("*.weights.h5"))
     if not weight_files:
-        sys.exit(f"No weight files found in: {search_dirs}")
+        sys.exit(
+            f"No .weights.h5 files found in {search_dir}\n"
+            "Run step 07 feedback training first to generate iterative weights."
+        )
+
+    print(f"Evaluating {len(weight_files)} weight file(s) from {search_dir.relative_to(ROOT)}")
 
     # Load eval tiles — walks all sheet subdirectories
     print("Loading evaluation tiles...")
@@ -196,15 +208,15 @@ def main():
     results.sort(key=lambda x: x["path_f1"], reverse=True)
     print_table(results)
 
-    # Save CSV alongside the finetuned weights
-    out_dir = ROOT / paths_cfg["models_finetuned"]
+    # Save CSV to iterative/ (or override dir if specified)
+    out_dir = search_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     csv_path = out_dir / "evaluation_results.csv"
     with open(csv_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=results[0].keys())
         writer.writeheader()
         writer.writerows(results)
-    print(f"Saved: {csv_path}")
+    print(f"Saved: {csv_path.relative_to(ROOT)}")
 
 
 if __name__ == "__main__":
