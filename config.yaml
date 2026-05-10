@@ -83,6 +83,21 @@ finetune:
   early_stopping_patience: 10 # stop if path_f1 doesn't improve for this many epochs
   # checkpoint_metric: path_f1  # always path_f1 — here for documentation only
 
+feedback:
+  # Feedback fine-tuning (step 07) — runs AFTER mending in QGIS
+  # Run rasterise.py (maptools) then train.py (tf-gpu)
+  replay_ratio: 0.4           # fraction of each batch drawn from ground-truth replay pool
+                               # 0.4 = 40% GT tiles, 60% feedback tiles per batch
+  feedback_loss_weight: 0.8   # loss weight for pseudo-label tiles (ground-truth = 1.0)
+                               # reduces the influence of any uncorrected prediction errors
+  freeze_encoder_blocks: 2    # freeze first N of 4 encoder stages (0 = none, 4 = all)
+                               # blocks 1-2 encode low-level edge/texture features —
+                               # freezing them preserves cross-map generalisability
+  learning_rate: 1.0e-5       # much lower than initial fine-tune (1e-4) — small nudge only
+  epochs: 20
+  early_stopping_patience: 5  # stops when cross-sheet Path-F1 stops improving
+  max_val_tiles: 200           # cap on validation tiles evaluated per epoch
+
 annotation:
   # Every unique label drawn in labelme automatically becomes its own feature class.
   # The label name is used directly as the annotations subfolder (e.g. "water" → annotations/water/).
