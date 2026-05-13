@@ -1,29 +1,17 @@
 # polygons.yml — pinned full export for the polygons environment
 # MapSAM polygon fine-tuning and inference + MapTextPipeline text spotting
-# Python 3.12, PyTorch 2.2.2+cu121, CUDA 12.1 (conda) + pip cu12 wheels
+# Python 3.12, PyTorch 2.2.2+cu121, CUDA 12.1 (conda toolkit + pip cu12 wheels)
 #
 # Development machine: WSL2, Ubuntu, NVIDIA RTX 3050 4GB, Driver 581.95, CUDA 12.1
 # Exported: 2026-05-13
 #
-# KNOWN ISSUE — duplicate CUDA pip packages:
-#   This env contains both nvidia-*-cu12 (correct, used by torch 2.2.2) and
-#   nvidia-*-cu13 / nvidia-* (leftover from a failed monai 1.5.2 install attempt).
-#   The cu13 packages are unused but harmless. To clean them up manually:
-#     pip uninstall cuda-bindings cuda-pathfinder cuda-toolkit triton \
-#       nvidia-cublas nvidia-cuda-cupti nvidia-cuda-nvrtc nvidia-cuda-runtime \
-#       nvidia-cudnn-cu13 nvidia-cufft nvidia-cufile nvidia-curand \
-#       nvidia-cusolver nvidia-cusparse nvidia-cusparselt-cu13 \
-#       nvidia-nccl-cu13 nvidia-nvjitlink nvidia-nvshmem-cu13 nvidia-nvtx
-#   Then reinstall torch to restore any cu12 wheels that were uninstalled:
-#     pip install torch==2.2.2+cu121 torchvision==0.17.2 \
-#       --index-url https://download.pytorch.org/whl/cu121
-#
-# monai is pinned to 1.3.2 — newer versions (>=1.4) require torch>=2.4 and will
-# upgrade torch if installed without a version pin, breaking mapreader and torchvision.
-#
 # Non-PyPI packages (not reproducible from this file alone):
 #   maptextpipeline==0.0.1  ->  pip install -e models/MapTextPipeline/
 #   detectron2==0.6         ->  see envs/README.md for install command
+#
+# monai is pinned to 1.3.2 — do not upgrade. Versions >=1.4 require torch>=2.4
+# and will silently upgrade torch if installed without a pin, breaking mapreader
+# and torchvision.
 #
 # To recreate exactly: conda env create -f envs/polygons.yml
 # For a portable minimal spec: see envs/polygons-base.yml
@@ -71,6 +59,7 @@ dependencies:
   - cuda-opencl-dev=12.1.56=0
   - cuda-profiler-api=12.1.55=0
   - cuda-sanitizer-api=12.1.55=0
+  - cuda-toolkit=12.1.0=0
   - cuda-tools=12.1.0=0
   - cuda-visual-tools=12.1.0=0
   - expat=2.7.4=h7354ed3_0
@@ -177,11 +166,6 @@ dependencies:
       - comm==0.2.3
       - contourpy==1.3.3
       - cryptography==46.0.5
-      # --- CUDA 13 duplicates (unused, leftover from failed monai 1.5.2 install) ---
-      - cuda-bindings==13.2.0
-      - cuda-pathfinder==1.5.4
-      - cuda-toolkit==13.0.2
-      # -------------------------------------------------------------------------
       - cycler==0.12.1
       - cython==0.29.37
       - debugpy==1.8.20
@@ -269,23 +253,6 @@ dependencies:
       - notebook-shim==0.2.4
       - numba==0.64.0
       - numpy==1.26.4
-      # --- cu13 duplicates (unused) ---
-      - nvidia-cublas==13.1.0.3
-      - nvidia-cuda-cupti==13.0.85
-      - nvidia-cuda-nvrtc==13.0.88
-      - nvidia-cuda-runtime==13.0.96
-      - nvidia-cudnn-cu13==9.19.0.56
-      - nvidia-cufft==12.0.0.61
-      - nvidia-cufile==1.15.1.6
-      - nvidia-curand==10.4.0.35
-      - nvidia-cusolver==12.0.4.66
-      - nvidia-cusparse==12.6.3.3
-      - nvidia-cusparselt-cu13==0.8.0
-      - nvidia-nccl-cu13==2.28.9
-      - nvidia-nvjitlink==13.0.88
-      - nvidia-nvshmem-cu13==3.4.5
-      - nvidia-nvtx==13.0.85
-      # --- cu12 (correct, used by torch 2.2.2) ---
       - nvidia-cublas-cu12==12.1.3.1
       - nvidia-cuda-cupti-cu12==12.1.105
       - nvidia-cuda-nvrtc-cu12==12.1.105
@@ -368,7 +335,6 @@ dependencies:
       - tornado==6.5.4
       - tqdm==4.67.3
       - traitlets==5.14.3
-      - triton==3.6.0
       - typer==0.24.1
       - typing-extensions==4.15.0
       - tzdata==2025.3

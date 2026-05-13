@@ -95,8 +95,6 @@ pip install detectron2 \
 | `lines` | pip `nvidia-*-cu12` wheels — installed automatically as tensorflow dependencies, no conda CUDA channel needed |
 | `polygons` | conda `nvidia/label/cuda-12.1.0` channel (compiler + headers for building detectron2) + pip `nvidia-*-cu12` wheels (used by torch at runtime) |
 
-The `polygons` environment currently contains **duplicate CUDA 13 pip packages** alongside the correct CUDA 12 ones — a leftover from a failed `pip install monai` without a version pin that temporarily upgraded torch to 2.11.0. These packages are unused and harmless. See the comment at the top of `polygons.yml` for cleanup instructions.
-
 ---
 
 ## Activating environments
