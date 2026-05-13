@@ -3,11 +3,9 @@ This is a toolking for comprehensive semi-automated vectorisation of cadastral m
 Initial setup:
 
 ```python
-# these are temporary instructions for now before final environments are subbed in.
-conda env create -f envs/maptools.yml
-conda activate maptools
-        #Not yet in envs: cond env create -f envs/tf-gpu.yml
-        #Not yet in envs: cond env create -f envs/New-MapReader.yml
+conda env create -f envs/annotation.yml   #primaritly for annotation
+conda env create -f envs/polygons.yml   #for running MapReader-wrapped text detection and MapSAM feature detection
+conda env create -f envs/lines.yml      #for running boundary line detection U-Net
 ```
 
 Running through the pipeline:

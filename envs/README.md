@@ -1,66 +1,108 @@
 # Environment Files
 
-## Two-tier system
+Three conda environments are used across the pipeline. **Never mix them** — the deep-learning dependencies conflict.
 
-| File | Purpose |
-|---|---|
-| `*.yml` | **Fully pinned** export from the development machine. Use for exact reproduction. |
-| `*-base.yml` | **Minimal portable** spec. Use as a starting point on different hardware/OS. |
+---
 
-## Environments
+## Two-tier file structure
 
-| Environment | Used by | GPU | Python | Key framework |
-|---|---|---|---|---|
-| `maptools` | steps 01, 02, 05, 06 (text_to_vector), 07 (rasterise) | None | 3.11 | rasterio / geopandas |
-| `tf-gpu` | steps 03, 04, 07 (train) | CUDA 12.x | 3.11 | TensorFlow 2.21 |
-| `New-MapReader` | step 06 (predict) | CUDA 12.1 | 3.12 | PyTorch 2.2 + detectron2 |
-| `MapSAM` | steps 04, 05 (mapsam) | CUDA 11.1 | 3.8 | PyTorch 1.9.1 |
+Each environment has two files:
+
+| Tier | Filename pattern | Purpose |
+|---|---|---|
+| **Pinned** | `<name>.yml` | Exact full export from the development machine. Guarantees bit-for-bit reproduction on identical hardware. Use this first. |
+| **Base** | `<name>-base.yml` | Minimal portable spec. Omits build hashes and hardware-specific pins. Use this when the pinned file fails (different OS, CUDA version, or driver). |
+
+---
+
+## Environment summary
+
+| Environment | Steps | Python | Key packages |
+|---|---|---|---|
+| `maptools` | 01, 02, 05, 06b | 3.11 | rasterio, GDAL, geopandas, shapely, scikit-image, skan, labelme, osam |
+| `lines` | 03 boundaries, 04 boundaries, 07 feedback | 3.11 | TensorFlow 2.21, Keras 3.13, numpy 1.x |
+| `polygons` | 03 MapSAM, 04 MapSAM, 06a text | 3.12 | PyTorch 2.2.2+cu121, mapreader 1.8.2, monai 1.3.2, detectron2 0.6 |
+
+`maptools` is also used for drawing masks (step 0) and all GeoPackage writes.
+
+---
 
 ## Development machine
 
-- **GPU**: NVIDIA GeForce RTX 3050 Laptop (4 GB VRAM)
-- **Driver**: 581.95 · **CUDA runtime**: 13.0 · **nvcc toolkit**: 12.1.66
-- **OS**: Ubuntu (WSL2 on Windows)
+- OS: WSL2 / Ubuntu on Windows 11
+- GPU: NVIDIA RTX 3050 4GB
+- Driver: 581.95
+- CUDA (system): 12.1
+- nvcc: 12.1.66
 
-## Non-PyPI packages (require manual install)
+---
 
-These packages are **not on PyPI** and will not be installed by the yml files alone:
+## Creating environments
 
-### New-MapReader
-```bash
-# 1. MapTextPipeline — install from local repo
-pip install -e models/MapTextPipeline/
-
-# 2. detectron2 — build from GitHub (match your CUDA version)
-pip install git+https://github.com/facebookresearch/detectron2.git
-# OR download a pre-built wheel from:
-# https://github.com/facebookresearch/detectron2/releases
-```
-
-## Recreating an environment
-
-### Exact reproduction (same hardware, linux-64)
+### maptools
 ```bash
 conda env create -f envs/maptools.yml
-conda env create -f envs/tf-gpu.yml
-conda env create -f envs/New-MapReader.yml
-conda env create -f envs/MapSAM.yml
+# or portable:
+conda env create -f envs/maptools-base.yml
 ```
 
-### Different hardware — use base specs
+### lines
 ```bash
-conda env create -f envs/maptools-base.yml        # no GPU required
-conda env create -f envs/tf-gpu-base.yml          # adjust CUDA version in comments if needed
-conda env create -f envs/New-MapReader-base.yml   # adjust PyTorch index URL if needed
-conda env create -f envs/MapSAM-base.yml          # legacy CUDA 11.1 — see comments
+conda env create -f envs/lines.yml
+# or portable:
+conda env create -f envs/lines-base.yml
 ```
 
-## Known compatibility constraints
+### polygons
+```bash
+conda env create -f envs/polygons.yml
+# or portable:
+conda env create -f envs/polygons-base.yml
+```
 
-| Environment | Constraint | Reason |
+Then install the two non-PyPI packages (required for both pinned and base):
+
+```bash
+conda activate polygons
+
+# 1. MapTextPipeline — local install from the repo
+pip install -e models/MapTextPipeline/
+
+# 2. detectron2 — prebuilt wheel (recommended)
+pip install detectron2 \
+  -f https://dl.fbaipublicfiles.com/detectron2/wheels/cu121/torch2.2/index.html
+```
+
+---
+
+## Known constraints
+
+| Constraint | Affected env | Reason |
 |---|---|---|
-| All | linux-64 pinned exports | Build strings are platform-specific |
-| `New-MapReader` | `numpy<2.0` | detectron2 0.6 incompatible with numpy 2.x |
-| `tf-gpu` | `numpy<2.0` | TensorFlow 2.x incompatible with numpy 2.x |
-| `MapSAM` | Python 3.8, `numpy<1.25` | monai 1.1.0 + scipy 1.7.3 compatibility |
-| `MapSAM` | `torch==1.9.1+cu111` | Very old wheel — legacy index required |
+| `numpy<2.0` | lines, polygons | TF 2.21 and detectron2 0.6 both break with numpy 2.x |
+| `monai==1.3.2` | polygons | monai >=1.4 requires torch>=2.4, silently upgrades torch and breaks mapreader + torchvision if installed without a version pin |
+| `antlr4-python3-runtime==4.9.3` | polygons | hydra-core and omegaconf require exactly the 4.9.x series |
+| `tensorflow==2.21.0` | lines | Keras 3.x checkpoint format is not backward compatible with Keras 2.x |
+| `torch==2.2.2+cu121` | polygons | mapreader 1.8.2 requires torch<=2.2.2; always install from `https://download.pytorch.org/whl/cu121` |
+| Python 3.11 | lines | TF 2.21 wheel is not available for Python 3.12 |
+
+---
+
+## CUDA delivery
+
+| Environment | CUDA delivery method |
+|---|---|
+| `lines` | pip `nvidia-*-cu12` wheels — installed automatically as tensorflow dependencies, no conda CUDA channel needed |
+| `polygons` | conda `nvidia/label/cuda-12.1.0` channel (compiler + headers for building detectron2) + pip `nvidia-*-cu12` wheels (used by torch at runtime) |
+
+The `polygons` environment currently contains **duplicate CUDA 13 pip packages** alongside the correct CUDA 12 ones — a leftover from a failed `pip install monai` without a version pin that temporarily upgraded torch to 2.11.0. These packages are unused and harmless. See the comment at the top of `polygons.yml` for cleanup instructions.
+
+---
+
+## Activating environments
+
+```bash
+conda activate maptools     # geospatial steps, annotation, vectorise, text_to_vector
+conda activate lines        # U-Net train, predict, feedback
+conda activate polygons     # MapSAM train, predict, text spotting inference
+```
