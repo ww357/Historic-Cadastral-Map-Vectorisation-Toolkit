@@ -26,7 +26,9 @@ Per-feature config is read from vectorise.features.<feature> in config.yaml.
 Falls back to vectorise.features.default if no specific entry exists.
 
 Usage:
-    python vectorise.py --sheet MapSheetName --feature FeatureName
+    python vectorise.py --sheet MapSheetName --feature water
+    python vectorise.py --sheet MapSheetName --feature water building vegetation
+    python vectorise.py --sheet MapSheetName                  (auto-discovers all predicted features)
 """
 
 from __future__ import annotations
@@ -362,19 +364,63 @@ def vectorise(sheet_id: str, feature: str, cfg: dict, stitched_path: Path, geore
 # Entry point
 # ---------------------------------------------------------------------------
 
+def discover_features(sheet_id: str, cfg: dict) -> list[str]:
+    """
+    Return all MapSAM-predicted features for this sheet by scanning
+    data/predictions/<feature>/<sheet_id>/.
+
+    Excludes non-MapSAM directories ('boundaries', 'text') and any
+    directory that exists but contains no prediction PNGs for this sheet.
+    """
+    _NON_MAPSAM = {"boundaries", "text"}
+    pred_root = ROOT / cfg["paths"]["predictions"]
+    if not pred_root.exists():
+        return []
+    features = []
+    for feature_dir in sorted(pred_root.iterdir()):
+        if not feature_dir.is_dir():
+            continue
+        if feature_dir.name in _NON_MAPSAM:
+            continue
+        sheet_pred_dir = feature_dir / sheet_id
+        if sheet_pred_dir.exists() and any(sheet_pred_dir.glob("*.png")):
+            features.append(feature_dir.name)
+    return features
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Stitch MapSAM feature predictions and vectorise to GeoPackage."
     )
     parser.add_argument("--sheet",   required=True, help="Sheet ID")
-    parser.add_argument("--feature", required=True,
-                        help="Feature class — any label used in labelme annotations "
-                             "(e.g. water, building, vegetation)")
+    parser.add_argument("--feature", nargs='+', default=None,
+                        help="Feature class(es) to vectorise, space-separated "
+                             "(e.g. water building vegetation). "
+                             "If omitted, all MapSAM-predicted features for the sheet "
+                             "are auto-discovered from data/predictions/.")
     args = parser.parse_args()
 
     cfg = load_config()
-    stitched_path, georef = stitch(args.sheet, args.feature, cfg)
-    vectorise(args.sheet, args.feature, cfg, stitched_path, georef)
+
+    if args.feature:
+        features = args.feature
+    else:
+        features = discover_features(args.sheet, cfg)
+        if not features:
+            sys.exit(
+                f"No MapSAM predictions found for sheet '{args.sheet}' "
+                f"under {ROOT / cfg['paths']['predictions']}.\n"
+                "Run 04_predict first, or pass --feature explicitly."
+            )
+        print(f"Auto-discovered features: {', '.join(features)}\n")
+
+    for i, feature in enumerate(features):
+        if len(features) > 1:
+            print(f"═══ Feature {i + 1}/{len(features)}: {feature} ═══\n")
+        stitched_path, georef = stitch(args.sheet, feature, cfg)
+        vectorise(args.sheet, feature, cfg, stitched_path, georef)
+        if len(features) > 1 and i < len(features) - 1:
+            print()
 
 
 if __name__ == "__main__":
