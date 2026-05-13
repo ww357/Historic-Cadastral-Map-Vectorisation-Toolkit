@@ -46,10 +46,9 @@ python "steps/04_predict/polygons/predict.py" --sheet MapSheetName --feature Fea
 
 ## Step 05 - Vectorise
 conda activate maptools
-python "steps/05_vectorise/lines/vectorise.py" --sheet MapSheetName # stitch boundary patches + skeletonise → polylines → GeoPackage
-python "steps/05_vectorise/polygons/vectorise.py" --sheet MapSheetName --feature FeatureName
-python "steps/05_vectorise/text/text_to_vector.py" --sheet MapSheetName # stitch feature patches + polygonise → polygons → GeoPackage (repeat per feature)
-
+python "steps/05_vectorise/lines/vectorise.py" --sheet MapSheetName # stitch and vectorise boundary lines
+python "steps/05_vectorise/polygons/vectorise.py" --sheet MapSheetName # stitch and vectorise polygons
+python "steps/05_vectorise/text/text_to_vector.py" --sheet MapSheetName # stitch and vectorise text
 
 ## Step 07 - Feedback loop
 conda activate lines
