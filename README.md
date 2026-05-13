@@ -13,41 +13,46 @@ Running through the pipeline:
 
 ## Step 01 - Patchify
 
-conda run -n maptools python "steps/01_ patchify/draw_mask.py" --sheet MapSheetName
+conda activate maptools 
+python "steps/01_ patchify/draw_mask.py" --sheet MapSheetName
 # run this to interactively make mask of map area on the document if necessary 
 # to reduce patches for inference (or this mask can be made in another programme):
-conda run -n maptools python "steps/01_ patchify/patchify.py" --sheet MapSheetName
+python "steps/01_ patchify/patchify.py" --sheet MapSheetName
 # slice GeoTIFF into 512px patches (use --mask flag if no mask is auto-found)
 
 ## Step 02 - Annotate
-conda run -n maptools python "steps/02_annotate/annotate.py" --sheet MapSheetName
+python "steps/02_annotate/annotate.py" --sheet MapSheetName
 # open labelme to draw boundary lines and feature polygons
-conda run -n maptools python "steps/02_annotate/export_masks.py" --sheet MapSheetName
+python "steps/02_annotate/export_masks.py" --sheet MapSheetName
 # convert labelme JSON to binary mask PNGs per feature label
 
 ## Step 03 - Fine-tune (Boundaries - U-Net)
-conda run -n tf-gpu python "steps/03_finetune/boundaries/train.py" --sheet MapSheetName --name map_v1
+conda activate lines
+python "steps/03_finetune/boundaries/train.py" --sheet MapSheetName --name map_v1
 # fine-tune boundary U-Net, checkpoints on path-F1
 
 ## Step 03 - Fine-tune (Features - MapSAM)
-conda run -n MapSAM python "steps/03_finetune/MapSAM/train.py" --sheet MapSheetName --feature FeatureName --name map_v1 #CHECK THIS NAME FLAG STILL WORKS!
+conda activate polygons
+python "steps/03_finetune/MapSAM/train.py" --sheet MapSheetName --feature FeatureName --name map_v1 #CHECK THIS NAME FLAG STILL WORKS!
 # fine-tune SAM DoRA weights for one feature class (repeat per feature)
 
 ## Step 04 - Predict
-conda run -n tf-gpu python "steps/04_predict/boundaries/predict.py" --sheet MapSheetName
+conda activate lines
+python "steps/04_predict/boundaries/predict.py" --sheet MapSheetName
 # run U-Net on all patches, skips manually annotated ones
-
-conda run -n MapSAM python "steps/04_predict/MapSAM/predict.py" --sheet MapSheetName --feature FeatureName
+conda activate polygons
+python "steps/04_predict/MapSAM/predict.py" --sheet MapSheetName --feature FeatureName
 # run MapSAM on all patches for one feature (repeat per feature)
 
 ## Step 05 - Vectorise
-conda run -n maptools python "steps/05_vectorise/boundaries/vectorise.py" --sheet MapSheetName
+conda activate maptools
+python "steps/05_vectorise/boundaries/vectorise.py" --sheet MapSheetName
 # stitch boundary patches + skeletonise → polylines → GeoPackage
-conda run -n maptools python "steps/05_vectorise/features/vectorise.py" --sheet MapSheetName --feature FeatureName
+python "steps/05_vectorise/features/vectorise.py" --sheet MapSheetName --feature FeatureName
 # stitch feature patches + polygonise → polygons → GeoPackage (repeat per feature)
 
 ## Step 06 - Text
-conda activate New-MapReader
+conda activate polygons
 python "steps/06_text/predict.py" --sheet MapSheetName
 conda activate maptools
 python "steps/06_text/fix_text_layer.py" --sheet MapSheetName
