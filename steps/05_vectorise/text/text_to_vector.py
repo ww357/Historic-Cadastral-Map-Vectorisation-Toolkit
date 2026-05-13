@@ -1,9 +1,9 @@
 """
 Write the existing text_preds.geojson into the GeoPackage as a "text" layer.
 
-Run this in the maptools environment after predict.py has completed:
+Run this in the maptools environment after text_predict.py has completed:
     conda activate maptools
-    python steps/06_text/text_to_vector.py --sheet SHEET_ID
+    python steps/05_vectorise/text/text_to_vector.py --sheet SHEET_ID
 """
 
 import argparse
@@ -14,7 +14,7 @@ from pathlib import Path
 import geopandas as gpd
 import yaml
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def main():

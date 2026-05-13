@@ -18,7 +18,8 @@ Writes : data/predictions/text/<SHEET_ID>/text_preds.geojson
          data/outputs/<SHEET_ID>.gpkg        (layer "text")
 
 Usage:
-    python predict.py --sheet SHEET_ID [--weights path/to/weights.pth] [--device cpu]
+    python steps/04_predict/text/text_predict.py --sheet SHEET_ID [--weights path/to/weights.pth] [--device cpu]
+    python steps/04_predict/polygons/predict.py --sheet SHEET_ID --feature text [water building ...]
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ import rasterio
 import yaml
 from PIL import Image
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +334,7 @@ def predict(sheet_id: str, repo_root: Path,
         print(f"  {geojson_path.relative_to(repo_root)}")
         print(f"\nTo add the text layer to the GeoPackage:")
         print(f"  conda activate maptools")
-        print(f"  python steps/06_text/text_to_vector.py --sheet {sheet_id}")
+        print(f"  python steps/05_vectorise/text/text_to_vector.py --sheet {sheet_id}")
         print(f"\nTo force a full re-run, delete these files first:")
         print(f"  rm {geojson_path}")
         print(f"  rm {checkpoint_path}")
@@ -503,7 +504,7 @@ def predict(sheet_id: str, repo_root: Path,
 
     print(f"\nTo add the text layer to the GeoPackage, run in a separate terminal:")
     print(f"  conda activate maptools")
-    print(f"  python steps/06_text/text_to_vector.py --sheet {sheet_id}")
+    print(f"  python steps/05_vectorise/text/text_to_vector.py --sheet {sheet_id}")
     print(f"\nDone.")
 
 

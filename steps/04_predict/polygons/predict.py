@@ -228,34 +228,55 @@ def predict(sheet_id: str, feature: str, weights_arg: str | None,
 
 
 if __name__ == "__main__":
+    import subprocess
+
     parser = argparse.ArgumentParser(
-        description="Run MapSAM inference on patchified map sheet."
+        description="Run MapSAM (polygon features) and/or text spotting inference on a map sheet."
     )
     parser.add_argument("--sheet",      required=True,
                         help="Sheet ID (subdirectory under patches/images/)")
     parser.add_argument("--feature",    required=True, nargs='+',
-                        help="Feature class(es) — any label(s) used in labelme annotations "
-                             "(e.g. water building vegetation). Pass one or more, space-separated.")
+                        help="Feature class(es) to predict, space-separated. "
+                             "Use any MapSAM label (e.g. water building vegetation) "
+                             "and/or 'text' to run MapTextPipeline text spotting.")
     parser.add_argument("--weights",    default=None,
-                        help="DoRA .pth weights file (default: auto-selects by search order). "
-                             "Only used when predicting a single feature.")
+                        help="DoRA .pth weights file for MapSAM features "
+                             "(default: auto-selects by search order). "
+                             "Ignored for 'text' and when multiple MapSAM features are specified.")
     parser.add_argument("--threshold",  type=float, default=None,
-                        help="Sigmoid threshold for binary mask (default: from config or 0.5)")
+                        help="Sigmoid threshold for binary mask (default: from config or 0.5). "
+                             "MapSAM features only.")
     parser.add_argument("--batch-size", type=int, default=None,
-                        help="Patches per forward pass (default: from config or 4)")
+                        help="Patches per forward pass (default: from config or 4). "
+                             "MapSAM features only.")
+    parser.add_argument("--device",     default=None,
+                        help="Device for text spotting: 'cuda', 'cpu', or 'default' (auto-detect). "
+                             "Text feature only.")
     args = parser.parse_args()
 
-    features = args.feature
-    if len(features) > 1 and args.weights:
-        print("Warning: --weights is ignored when multiple features are specified "
+    features        = args.feature
+    mapsam_features = [f for f in features if f != "text"]
+
+    if len(mapsam_features) > 1 and args.weights:
+        print("Warning: --weights is ignored when multiple MapSAM features are specified "
               "(each feature uses its own auto-resolved weights).\n")
         weights_arg = None
     else:
         weights_arg = args.weights
 
+    text_script = Path(__file__).resolve().parents[1] / "text" / "text_predict.py"
+
     for i, feature in enumerate(features):
         if len(features) > 1:
             print(f"═══ Feature {i + 1}/{len(features)}: {feature} ═══\n")
-        predict(args.sheet, feature, weights_arg, args.threshold, args.batch_size)
+
+        if feature == "text":
+            cmd = [sys.executable, str(text_script), "--sheet", args.sheet]
+            if args.device:
+                cmd += ["--device", args.device]
+            subprocess.run(cmd, check=True)
+        else:
+            predict(args.sheet, feature, weights_arg, args.threshold, args.batch_size)
+
         if len(features) > 1 and i < len(features) - 1:
             print()

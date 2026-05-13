@@ -28,35 +28,32 @@ python "steps/02_annotate/export_masks.py" --sheet MapSheetName
 
 ## Step 03 - Fine-tune (Boundaries - U-Net)
 conda activate lines
-python "steps/03_finetune/boundaries/train.py" --sheet MapSheetName --name map_v1
+python "steps/03_finetune/lines/train.py" --sheet MapSheetName --name map_v1
 # fine-tune boundary U-Net, checkpoints on path-F1
 
 ## Step 03 - Fine-tune (Features - MapSAM)
 conda activate polygons
-python "steps/03_finetune/MapSAM/train.py" --sheet MapSheetName --feature FeatureName --name map_v1 #CHECK THIS NAME FLAG STILL WORKS!
+python "steps/03_finetune/polygons/train.py" --sheet MapSheetName --feature FeatureName --name map_v1 #CHECK THIS NAME FLAG STILL WORKS!
 # fine-tune SAM DoRA weights for one feature class (repeat per feature)
 
 ## Step 04 - Predict
 conda activate lines
-python "steps/04_predict/boundaries/predict.py" --sheet MapSheetName
+python "steps/04_predict/lines/predict.py" --sheet MapSheetName #CHANGE TO LINES
 # run U-Net on all patches, skips manually annotated ones
 conda activate polygons
-python "steps/04_predict/MapSAM/predict.py" --sheet MapSheetName --feature FeatureName
-# run MapSAM on all patches for one feature (repeat per feature)
+python "steps/04_predict/polygons/predict.py" --sheet MapSheetName --feature FeatureName1 FeatureName2 FeatureName3 ...
+# run MapSAM on all patches for listed features & run text prediction if "text" is specified
 
 ## Step 05 - Vectorise
 conda activate maptools
-python "steps/05_vectorise/boundaries/vectorise.py" --sheet MapSheetName
-# stitch boundary patches + skeletonise → polylines → GeoPackage
-python "steps/05_vectorise/features/vectorise.py" --sheet MapSheetName --feature FeatureName
-# stitch feature patches + polygonise → polygons → GeoPackage (repeat per feature)
+python "steps/05_vectorise/lines/vectorise.py" --sheet MapSheetName # stitch boundary patches + skeletonise → polylines → GeoPackage
+python "steps/05_vectorise/polygons/vectorise.py" --sheet MapSheetName --feature FeatureName
+python "steps/05_vectorise/text/text_to_vector.py" --sheet MapSheetName # stitch feature patches + polygonise → polygons → GeoPackage (repeat per feature)
 
-## Step 06 - Text
-conda activate polygons
-python "steps/06_text/predict.py" --sheet MapSheetName
-conda activate maptools
-python "steps/06_text/fix_text_layer.py" --sheet MapSheetName
 
+## Step 07 - Feedback loop
+conda activate lines
+python "steps/07_feedback/lines/feedback.py" --sheet MapSheetName
 
 # Output: data/outputs/MapSheetName.gpkg
 ```
