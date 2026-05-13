@@ -233,14 +233,29 @@ if __name__ == "__main__":
     )
     parser.add_argument("--sheet",      required=True,
                         help="Sheet ID (subdirectory under patches/images/)")
-    parser.add_argument("--feature",    required=True,
-                        help="Feature class — any label used in labelme annotations "
-                             "(e.g. water, building, vegetation)")
+    parser.add_argument("--feature",    required=True, nargs='+',
+                        help="Feature class(es) — any label(s) used in labelme annotations "
+                             "(e.g. water building vegetation). Pass one or more, space-separated.")
     parser.add_argument("--weights",    default=None,
-                        help="DoRA .pth weights file (default: auto-selects by search order)")
+                        help="DoRA .pth weights file (default: auto-selects by search order). "
+                             "Only used when predicting a single feature.")
     parser.add_argument("--threshold",  type=float, default=None,
                         help="Sigmoid threshold for binary mask (default: from config or 0.5)")
     parser.add_argument("--batch-size", type=int, default=None,
                         help="Patches per forward pass (default: from config or 4)")
     args = parser.parse_args()
-    predict(args.sheet, args.feature, args.weights, args.threshold, args.batch_size)
+
+    features = args.feature
+    if len(features) > 1 and args.weights:
+        print("Warning: --weights is ignored when multiple features are specified "
+              "(each feature uses its own auto-resolved weights).\n")
+        weights_arg = None
+    else:
+        weights_arg = args.weights
+
+    for i, feature in enumerate(features):
+        if len(features) > 1:
+            print(f"═══ Feature {i + 1}/{len(features)}: {feature} ═══\n")
+        predict(args.sheet, feature, weights_arg, args.threshold, args.batch_size)
+        if len(features) > 1 and i < len(features) - 1:
+            print()
