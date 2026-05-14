@@ -16,7 +16,7 @@ Weight search order:
 
 Usage:
     conda activate tf-gpu
-    python steps/04_predict/boundaries/predict.py --sheet SHEET_ID
+    python steps/04_predict/lines/predict.py --sheet SHEET_ID
 """
 
 import argparse

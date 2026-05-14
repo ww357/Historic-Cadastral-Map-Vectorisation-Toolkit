@@ -8,9 +8,9 @@ promoting weights or continuing training.
 Usage
 -----
     conda activate tf-gpu
-    python steps/03_finetune/boundaries/evaluate.py
-    python steps/03_finetune/boundaries/evaluate.py --weights-dir models/finetuned/working/
-    python steps/03_finetune/boundaries/evaluate.py --data-dir data/annotations/
+    python steps/03_finetune/lines/evaluate.py
+    python steps/03_finetune/lines/evaluate.py --weights-dir models/finetuned/working/
+    python steps/03_finetune/lines/evaluate.py --data-dir data/annotations/
 
 Output
 ------

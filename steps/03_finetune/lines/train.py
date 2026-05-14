@@ -15,7 +15,7 @@ not from these.
 Usage
 -----
     conda activate tf-gpu
-    python steps/03_finetune/boundaries/train.py --sheet SHEET_ID
+    python steps/03_finetune/lines/train.py --sheet SHEET_ID
 
 Data expected
 -------------
@@ -338,9 +338,9 @@ def main():
     print(f"Weights saved → {best_path.relative_to(ROOT)}")
     print(
         f"\nNext step: run prediction then mend in QGIS, then run step 07 feedback:\n"
-        f"  python steps/04_predict/boundaries/predict.py --sheet {args.sheet}\n"
-        f"  python steps/07_feedback/boundaries/rasterise.py --sheet {args.sheet}\n"
-        f"  python steps/07_feedback/boundaries/train.py --sheet {args.sheet}"
+        f"  python steps/04_predict/lines/predict.py --sheet {args.sheet}\n"
+        f"  python steps/07_feedback/lines/rasterise.py --sheet {args.sheet}\n"
+        f"  python steps/07_feedback/lines/train.py --sheet {args.sheet}"
     )
 
 
