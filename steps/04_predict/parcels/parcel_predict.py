@@ -388,6 +388,35 @@ def main() -> None:
         except Exception:
             epsg_out = 27700
 
+    # ── Map area mask ─────────────────────────────────────────────────────────
+    # Load the binary mask that defines the actual map area (white = in-map,
+    # black = margin / out-of-area).  Tiles whose core region has less than
+    # min_mask_coverage overlap with the mask are skipped — this prevents SAM
+    # being run on decorative borders, title cartouches, and white margins.
+    min_mask_cov = float(cfg.get("patchify", {}).get("min_mask_coverage", 0.01))
+    mask_img: np.ndarray | None = None
+
+    mask_candidates = [
+        ROOT / paths["masks"] / sheet_id / f"{sheet_id}.png",   # standard: masks/<sheet>/<sheet>.png
+        ROOT / paths["masks"] / sheet_id / f"{sheet_id}.PNG",
+        ROOT / paths["masks"] / sheet_id / f"{sheet_id}.tif",
+        ROOT / paths["masks"] / f"{sheet_id}.png",              # fallback: masks/<sheet>.png
+        ROOT / paths["masks"] / f"{sheet_id}.PNG",
+    ]
+    for _mp in mask_candidates:
+        if _mp.exists():
+            _raw = cv2.imread(str(_mp), cv2.IMREAD_GRAYSCALE)
+            if _raw is not None:
+                # Resize to TIF pixel dimensions if needed (mask may be lower-res)
+                if (_raw.shape[1], _raw.shape[0]) != (tif_w, tif_h):
+                    _raw = cv2.resize(_raw, (tif_w, tif_h),
+                                      interpolation=cv2.INTER_NEAREST)
+                mask_img = _raw
+                print(f"Mask      : {_mp.name}  (min_coverage={min_mask_cov})")
+                break
+    if mask_img is None:
+        print(f"Mask      : not found in {paths['masks']} — processing full sheet")
+
     # ── Parcel points (sqlite3 + WKB — no pyproj required) ────────────────────
     print("Reading parcel points ...")
     all_pts = read_gpkg_points_wkb(points_path)
@@ -444,6 +473,13 @@ def main() -> None:
             col_read = max(0, col_core - half_ov)
             row_read = max(0, row_core - half_ov)
 
+            # ── Mask coverage check — skip tiles outside the map area ─────────
+            if mask_img is not None:
+                core_mask = mask_img[row_core:row_core_end, col_core:col_core_end]
+                coverage  = float((core_mask > 0).mean())
+                if coverage < min_mask_cov:
+                    continue   # tile is in margin / border — no SAM inference
+
             # ── Points whose home is this tile's core ─────────────────────────
             tile_pts = pts_in[
                 (pts_in["_px_col"] >= col_core) & (pts_in["_px_col"] < col_core_end) &
@@ -471,6 +507,19 @@ def main() -> None:
 
             # ── Per-point SAM inference ───────────────────────────────────────
             for _, pt in tile_pts.iterrows():
+
+                # ── Point-level mask check ────────────────────────────────────
+                # Even inside a tile that passes the coverage threshold, an
+                # individual point may fall in a white margin or decorative
+                # border.  Look up the mask value at the point's pixel location
+                # and skip it if the mask is zero there.
+                if mask_img is not None:
+                    px_c = int(np.clip(round(float(pt["_px_col"])), 0, tif_w - 1))
+                    px_r = int(np.clip(round(float(pt["_px_row"])), 0, tif_h - 1))
+                    if mask_img[px_r, px_c] == 0:
+                        skipped += 1
+                        continue
+
                 # Point in SAM pixel coordinates (X = col, Y = row)
                 sam_px_x = float((pt["_px_col"] - col_read) * scale)
                 sam_px_y = float((pt["_px_row"] - row_read) * scale)
