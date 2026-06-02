@@ -293,29 +293,37 @@ def main() -> None:
                                separators=(",", ":")))
 
     # ── Scrub any existing 'parcels' layer cleanly before ogr2ogr ────────────
-    # Previous runs may have left the table in a half-deleted state (missing
-    # triggers, stale gpkg_contents entries, etc.) which causes ogr2ogr to fail
-    # with UNIQUE constraint errors even when using -overwrite.
-    # Wipe everything related to 'parcels' so ogr2ogr starts with a blank slate.
+    # We must remove ALL artefacts of a previous parcels layer or ogr2ogr will
+    # hit broken state.  The critical ones that were previously missed are the
+    # R-tree spatial index tables (rtree_parcels_geom*) — if these are left
+    # orphaned, ogr2ogr silently reuses them and QGIS ends up with a corrupt
+    # index: features disappear at zoom levels and can't be selected.
     if gpkg_path.exists():
         _con = sqlite3.connect(str(gpkg_path))
         try:
-            # Drop any triggers that reference the parcels table
+            # 1. Drop all triggers referencing parcels
             _triggers = _con.execute(
                 "SELECT name FROM sqlite_master "
                 "WHERE type='trigger' AND name LIKE '%parcels%'"
             ).fetchall()
             for (_t,) in _triggers:
                 _con.execute(f"DROP TRIGGER IF EXISTS [{_t}]")
-            # Remove from GeoPackage metadata tables
+
+            # 2. Drop R-tree spatial index tables (geometry column is 'geom')
+            for _sfx in ("", "_rowid", "_node", "_parent"):
+                _con.execute(f"DROP TABLE IF EXISTS [rtree_parcels_geom{_sfx}]")
+
+            # 3. Remove from GeoPackage metadata / extension tables
             _con.execute("DELETE FROM gpkg_contents         WHERE table_name='parcels'")
             _con.execute("DELETE FROM gpkg_geometry_columns WHERE table_name='parcels'")
-            # gpkg_ogr_contents (GDAL-specific, may not exist)
-            try:
-                _con.execute("DELETE FROM gpkg_ogr_contents WHERE table_name='parcels'")
-            except Exception:
-                pass
-            # Drop the table itself
+            for _ext_tbl in ("gpkg_ogr_contents", "gpkg_extensions",
+                             "gpkg_metadata_reference"):
+                try:
+                    _con.execute(f"DELETE FROM [{_ext_tbl}] WHERE table_name='parcels'")
+                except Exception:
+                    pass   # table may not exist in all GPKG versions
+
+            # 4. Drop the feature table itself
             _con.execute("DROP TABLE IF EXISTS [parcels]")
             _con.commit()
         except Exception as _e:
