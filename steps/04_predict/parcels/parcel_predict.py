@@ -488,13 +488,16 @@ def main() -> None:
             if len(tile_pts) == 0:
                 continue
 
-            # ── Read + downsample tile ────────────────────────────────────────
+            # ── Read tile (resize only if tile_size ≠ sam_input_size) ──────────
             tile_rgb = read_tile_rgb(src, col_read, row_read, tile_size)
-            tile_sam = np.ascontiguousarray(
-                cv2.resize(tile_rgb, (sam_size, sam_size),
-                           interpolation=cv2.INTER_AREA),
-                dtype=np.uint8,
-            )
+            if tile_size != sam_size:
+                tile_sam = np.ascontiguousarray(
+                    cv2.resize(tile_rgb, (sam_size, sam_size),
+                               interpolation=cv2.INTER_AREA),
+                    dtype=np.uint8,
+                )
+            else:
+                tile_sam = tile_rgb   # already C-contiguous uint8 from read_tile_rgb
 
             set_image_safe(predictor, tile_sam)   # encodes once per tile
 
