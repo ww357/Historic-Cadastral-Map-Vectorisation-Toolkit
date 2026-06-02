@@ -331,10 +331,11 @@ def main() -> None:
     paths = cfg["paths"]
     pcfg  = cfg.get("parcels", {})
 
-    tile_size   = args.tile_size or int(pcfg.get("tile_size",     2048))
-    sam_size    = int(pcfg.get("sam_input_size", 1024))
-    overlap     = args.overlap   or int(pcfg.get("overlap",        256))
-    points_file = pcfg.get("points_file", "Holnicote Apportionment Points.gpkg")
+    tile_size    = args.tile_size or int(pcfg.get("tile_size",     1024))
+    sam_size     = int(pcfg.get("sam_input_size", 1024))
+    overlap      = args.overlap   or int(pcfg.get("overlap",        128))
+    points_file  = pcfg.get("points_file", "Holnicote Apportionment Points.gpkg")
+    max_neg_pts  = int(pcfg.get("max_neg_points", 6))   # 0 disables negative prompting
 
     stride      = tile_size - overlap
     scale       = sam_size / tile_size   # 0.5 for 2048 → 1024
@@ -509,7 +510,7 @@ def main() -> None:
             )
 
             # ── Per-point SAM inference ───────────────────────────────────────
-            for _, pt in tile_pts.iterrows():
+            for pt_idx, pt in tile_pts.iterrows():
 
                 # ── Point-level mask check ────────────────────────────────────
                 # Even inside a tile that passes the coverage threshold, an
@@ -523,14 +524,40 @@ def main() -> None:
                         skipped += 1
                         continue
 
-                # Point in SAM pixel coordinates (X = col, Y = row)
+                # Foreground point in SAM pixel coordinates (X = col, Y = row)
                 sam_px_x = float((pt["_px_col"] - col_read) * scale)
                 sam_px_y = float((pt["_px_row"] - row_read) * scale)
 
+                # ── Negative (background) prompts ─────────────────────────────
+                # Use the nearest other parcel centroids in this tile as SAM
+                # background points.  This tells SAM "segment this parcel, NOT
+                # those adjacent ones", which prevents the mask from bleeding
+                # across boundaries or collapsing to the whole tile image.
+                if max_neg_pts > 0:
+                    others = tile_pts[tile_pts.index != pt_idx]
+                    if len(others) > 0:
+                        dx    = others["_px_col"].values - float(pt["_px_col"])
+                        dy    = others["_px_row"].values - float(pt["_px_row"])
+                        order = np.argsort(dx * dx + dy * dy)          # nearest first
+                        near  = others.iloc[order[:max_neg_pts]]
+                        neg_coords = np.column_stack([
+                            (near["_px_col"].values - col_read) * scale,
+                            (near["_px_row"].values - row_read) * scale,
+                        ])
+                        neg_coords = np.clip(neg_coords, 0.0, float(sam_size - 1))
+                        point_coords = np.vstack([[[sam_px_x, sam_px_y]], neg_coords])
+                        point_labels = np.array([1] + [0] * len(neg_coords), dtype=np.int32)
+                    else:
+                        point_coords = np.array([[sam_px_x, sam_px_y]])
+                        point_labels = np.array([1], dtype=np.int32)
+                else:
+                    point_coords = np.array([[sam_px_x, sam_px_y]])
+                    point_labels = np.array([1], dtype=np.int32)
+
                 try:
                     masks, scores, _ = predictor.predict(
-                        point_coords   = np.array([[sam_px_x, sam_px_y]]),
-                        point_labels   = np.array([1]),   # 1 = foreground
+                        point_coords     = point_coords,
+                        point_labels     = point_labels,
                         multimask_output = True,
                     )
                 except Exception as exc:
