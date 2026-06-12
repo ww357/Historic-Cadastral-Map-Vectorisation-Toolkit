@@ -109,6 +109,9 @@ import torch                                                       # noqa: E402
 from segment_anything import SamPredictor, sam_model_registry     # noqa: E402
 from tqdm import tqdm                                              # noqa: E402
 
+sys.path.insert(0, str(MAPSAM_DIR))
+from sam_dora_image_encoder import DoRA_Sam                        # noqa: E402
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -336,6 +339,10 @@ def main() -> None:
     overlap      = args.overlap   or int(pcfg.get("overlap",        128))
     points_file  = pcfg.get("points_file", "Holnicote Apportionment Points.gpkg")
     max_neg_pts  = int(pcfg.get("max_neg_points", 6))   # 0 disables negative prompting
+    # Adaptive scale: retry large-parcel predictions at 2× tile size
+    adaptive_scale    = bool(pcfg.get("adaptive_scale", True))
+    border_margin_px  = int(pcfg.get("border_margin_px", 4))
+    adaptive_max_fill = float(pcfg.get("adaptive_max_fill", 0.80))
 
     stride      = tile_size - overlap
     scale       = sam_size / tile_size   # 0.5 for 2048 → 1024
@@ -361,21 +368,55 @@ def main() -> None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device    : {device}")
 
-    # ── Load SAM ──────────────────────────────────────────────────────────────
-    # num_classes=4 → standard SAM architecture (3 multi-mask outputs + 1 single)
+    # ── Load SAM (plain or DoRA fine-tuned) ───────────────────────────────────
     sam_ckpt = (ROOT / paths["models_base"]
                 / "MapSAM" / "origional_weights" / "sam_vit_b_01ec64.pth")
     if not sam_ckpt.exists():
         sys.exit(f"SAM checkpoint not found: {sam_ckpt}")
 
+    # Auto-detect fine-tuned DoRA weights (most recently modified wins)
+    dora_weights: Path | None = None
+    _explicit = pcfg.get("weights", None)
+    if _explicit:
+        _p = Path(_explicit)
+        if not _p.is_absolute():
+            _p = ROOT / _p
+        if _p.exists():
+            dora_weights = _p
+        else:
+            print(f"Warning: explicit weights path not found: {_p}")
+    if dora_weights is None:
+        _candidates = sorted(
+            (ROOT / paths["models_finetuned"]).glob("sam_parcels*_best.pth"),
+            key=lambda p: p.stat().st_mtime,
+        )
+        if _candidates:
+            dora_weights = _candidates[-1]
+
+    use_dora = dora_weights is not None
+    # When using DoRA fine-tuned weights, pixel normalisation was trained with
+    # pixel_mean=[0,0,0], pixel_std=[1,1,1] — match this in model init.
+    _pixel_mean = [0, 0, 0] if use_dora else [123.675, 116.28,  103.53]
+    _pixel_std  = [1, 1, 1] if use_dora else [ 58.395,  57.12,   57.375]
+
     sam, _ = sam_model_registry["vit_b"](
         image_size  = sam_size,
         num_classes = 4,
         checkpoint  = str(sam_ckpt),
+        pixel_mean  = _pixel_mean,
+        pixel_std   = _pixel_std,
     )
-    sam.eval().to(device)
-    predictor = SamPredictor(sam)
-    print(f"SAM ViT-B : {sam_ckpt.name}\n")
+
+    if use_dora:
+        dora_model = DoRA_Sam(sam, rank=int(cfg["mapsam"].get("rank", 4)))
+        dora_model.load_dora_parameters(str(dora_weights))
+        dora_model.eval().to(device)
+        predictor = SamPredictor(dora_model.sam)
+        print(f"SAM ViT-B : {sam_ckpt.name}  +  DoRA: {dora_weights.name}\n")
+    else:
+        sam.eval().to(device)
+        predictor = SamPredictor(sam)
+        print(f"SAM ViT-B : {sam_ckpt.name}  (base weights — no fine-tuning)\n")
 
     # ── TIF metadata ──────────────────────────────────────────────────────────
     with rasterio.open(tif_path) as src:
@@ -571,6 +612,77 @@ def main() -> None:
                 if poly is None:
                     empty += 1
                     continue
+
+                # ── Adaptive scale retry for large parcels ────────────────────
+                # If the predicted mask bleeds to the tile border the parcel
+                # likely extends beyond the current tile.  Re-run at 2× tile
+                # size (downsampled to sam_size) to give SAM enough context to
+                # find the actual parcel boundary.
+                if adaptive_scale and tile_size == sam_size:
+                    m = np.array(masks[best_idx], dtype=np.uint8)
+                    bm = border_margin_px
+                    touches = (m[:bm, :].any() or m[-bm:, :].any() or
+                               m[:, :bm].any() or m[:, -bm:].any())
+                    if touches:
+                        big = tile_size * 2                  # 2× tile
+                        col_read_2x = max(0, int(pt["_px_col"]) - big // 2)
+                        row_read_2x = max(0, int(pt["_px_row"]) - big // 2)
+                        scale_2x    = sam_size / big         # 0.5
+                        tile_rgb_2x = read_tile_rgb(src, col_read_2x,
+                                                     row_read_2x, big)
+                        tile_sam_2x = np.ascontiguousarray(
+                            cv2.resize(tile_rgb_2x, (sam_size, sam_size),
+                                       interpolation=cv2.INTER_AREA),
+                            dtype=np.uint8)
+                        sam_tf_2x = Affine(
+                            tif_tf.a / scale_2x, 0.0,
+                            tif_tf.c + col_read_2x * tif_tf.a,
+                            0.0, tif_tf.e / scale_2x,
+                            tif_tf.f + row_read_2x * tif_tf.e,
+                        )
+                        # Rescale prompts to 2× coordinate space
+                        px2_x = float((pt["_px_col"] - col_read_2x) * scale_2x)
+                        px2_y = float((pt["_px_row"] - row_read_2x) * scale_2x)
+                        _others_2x = locals().get("others", None)
+                        _near_2x   = locals().get("near",   None)
+                        if max_neg_pts > 0 and _others_2x is not None and len(_others_2x) > 0 and _near_2x is not None:
+                            neg2 = np.column_stack([
+                                (_near_2x["_px_col"].values - col_read_2x) * scale_2x,
+                                (_near_2x["_px_row"].values - row_read_2x) * scale_2x,
+                            ])
+                            neg2 = np.clip(neg2, 0.0, float(sam_size - 1))
+                            pc2  = np.vstack([[[px2_x, px2_y]], neg2])
+                            pl2  = point_labels.copy()
+                        else:
+                            pc2 = np.array([[px2_x, px2_y]])
+                            pl2 = np.array([1], dtype=np.int32)
+
+                        try:
+                            set_image_safe(predictor, tile_sam_2x)
+                            if isinstance(predictor.features, tuple):
+                                predictor.features = predictor.features[0]
+                            m2, s2, _ = predictor.predict(
+                                point_coords=pc2, point_labels=pl2,
+                                multimask_output=True,
+                            )
+                            bi2   = int(np.argmax(s2))
+                            poly2 = vectorise_mask(m2[bi2], sam_tf_2x)
+                            m2_arr = np.array(m2[bi2], dtype=np.uint8)
+                            fill2  = float(m2_arr.mean())
+                            # Accept 2× result only if: not degenerate, not
+                            # filling most of the tile (failed prediction),
+                            # and gives a smaller / less clipped polygon.
+                            if (poly2 is not None
+                                    and fill2 < adaptive_max_fill
+                                    and poly2.area < poly.area * 1.5):
+                                poly = poly2
+                        except Exception:
+                            pass  # keep original 1× prediction on any error
+
+                        # Restore 1× image embedding for the remaining points
+                        set_image_safe(predictor, tile_sam)
+                        if isinstance(predictor.features, tuple):
+                            predictor.features = predictor.features[0]
 
                 rowid_val = pt.get("rowid", None)
                 features_out.append({
