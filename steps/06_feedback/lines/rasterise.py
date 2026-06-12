@@ -35,11 +35,11 @@ Writes : data/training/boundary_dataset/train/             — new 256px image t
 
 Usage:
     conda activate maptools
-    python steps/07_feedback/boundaries/rasterise.py --sheet SHEET_ID
+    python steps/06_feedback/lines/rasterise.py --sheet SHEET_ID
 
 Then run train.py in the tf-gpu environment:
     conda activate tf-gpu
-    python steps/07_feedback/boundaries/train.py --sheet SHEET_ID --name feedback_v1
+    python steps/06_feedback/lines/train.py --sheet SHEET_ID --name feedback_v1
 """
 
 from __future__ import annotations
@@ -468,7 +468,7 @@ def main():
         print(f"Eligible  → {(feedback_dir / 'eligible.csv').relative_to(ROOT)}")
     print(f"\nNext step:")
     print(f"  conda activate tf-gpu")
-    print(f"  python steps/07_feedback/boundaries/train.py "
+    print(f"  python steps/06_feedback/lines/train.py "
           f"--sheet {sheet_id} --name feedback_v1")
 
 

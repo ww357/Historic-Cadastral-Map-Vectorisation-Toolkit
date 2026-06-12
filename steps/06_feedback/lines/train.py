@@ -32,8 +32,8 @@ Writes : models/finetuned/iterative/feedback_vN_best.weights.h5  (auto-increment
 
 Usage:
     conda activate tf-gpu
-    python steps/07_feedback/boundaries/train.py --sheet SHEET_ID
-    python steps/07_feedback/boundaries/train.py --sheet SHEET_ID --name my_run
+    python steps/06_feedback/lines/train.py --sheet SHEET_ID
+    python steps/06_feedback/lines/train.py --sheet SHEET_ID --name my_run
 
 Options:
     --sheet      Sheet whose feedback tiles form the pseudo-label training set
@@ -177,7 +177,7 @@ def build_training_arrays(
             "No feedback tiles found for the current sheet.\n"
             "Run rasterise.py first:\n"
             "  conda activate maptools\n"
-            "  python steps/07_feedback/boundaries/rasterise.py --sheet SHEET_ID"
+            "  python steps/06_feedback/lines/rasterise.py --sheet SHEET_ID"
         )
 
     if gt_tiles and 0 < replay_ratio < 1:
@@ -402,7 +402,7 @@ def main():
             f"manifest.csv not found at {manifest_path}\n"
             "Run rasterise.py first:\n"
             "  conda activate maptools\n"
-            f"  python steps/07_feedback/boundaries/rasterise.py --sheet {sheet_id}"
+            f"  python steps/06_feedback/lines/rasterise.py --sheet {sheet_id}"
         )
     manifest = pd.read_csv(manifest_path).to_dict("records")
     print(f"Manifest loaded: {len(manifest)} entries")
@@ -451,7 +451,7 @@ def main():
             f"No feedback tiles found for sheet '{sheet_id}'.\n"
             f"Run rasterise.py first:\n"
             f"  conda activate maptools\n"
-            f"  python steps/07_feedback/boundaries/rasterise.py --sheet {sheet_id}"
+            f"  python steps/06_feedback/lines/rasterise.py --sheet {sheet_id}"
         )
     if not val_tiles:
         print(
@@ -591,7 +591,7 @@ def main():
         f"Step 03 finetune and step 04 predict will use them automatically\n"
         f"as the starting point for the next sheet.\n"
         f"\nTo compare iterative versions run:\n"
-        f"  python steps/03_finetune/boundaries/evaluate.py"
+        f"  python steps/03_finetune/lines/evaluate.py"
     )
 
 
