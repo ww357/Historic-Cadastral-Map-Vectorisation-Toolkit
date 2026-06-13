@@ -68,7 +68,9 @@ def render_mask(shapes: list, size: tuple[int, int],
     return mask
 
 
-def export_masks(sheet_id: str, line_width_override: int | None):
+def export_masks(sheet_id: str, line_width_override: int | None,
+                 patches_dir_override: str | None = None,
+                 json_dir_override: str | None = None):
     cfg     = load_config()
     acfg    = cfg["annotation"]
     ann_dir = ROOT / cfg["paths"]["annotations"]
@@ -76,11 +78,22 @@ def export_masks(sheet_id: str, line_width_override: int | None):
     boundary_label = acfg.get("boundary_label", "boundary")
     line_width     = line_width_override or int(acfg["line_width"])
 
-    json_dir    = ann_dir / "labelme_json" / sheet_id
-    patches_dir = ROOT / cfg["paths"]["patches"] / "images" / sheet_id
+    if json_dir_override:
+        json_dir = Path(json_dir_override)
+        if not json_dir.is_absolute():
+            json_dir = ROOT / json_dir
+    else:
+        json_dir = ann_dir / "labelme_json" / sheet_id
+
+    if patches_dir_override:
+        patches_dir = Path(patches_dir_override)
+        if not patches_dir.is_absolute():
+            patches_dir = ROOT / patches_dir
+    else:
+        patches_dir = ROOT / cfg["paths"]["patches"] / "images" / sheet_id
 
     if not json_dir.exists():
-        sys.exit(f"No annotations found at {json_dir}  — run annotate.py first.")
+        sys.exit(f"No annotations found at {json_dir}  — run annotate.py / labelme first.")
     if not patches_dir.exists():
         sys.exit(f"Patches not found: {patches_dir}")
 
@@ -146,8 +159,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Export labelme annotations to binary masks sorted by feature."
     )
-    parser.add_argument("--sheet",      required=True, help="Sheet ID")
-    parser.add_argument("--line-width", type=int, default=None,
+    parser.add_argument("--sheet",       required=True, help="Sheet ID")
+    parser.add_argument("--line-width",  type=int, default=None,
                         help="Override line width for linestrip rendering (default from config)")
+    parser.add_argument("--patches-dir", default=None,
+                        help="Path to patch images (overrides default data/patches/images/<sheet>). "
+                             "Use for parcel 1024px patches: data/patches/parcel/<sheet>")
+    parser.add_argument("--json-dir",    default=None,
+                        help="Path to labelme JSON files (overrides default labelme_json/<sheet>). "
+                             "Use for parcel patches where JSONs sit alongside the images.")
     args = parser.parse_args()
-    export_masks(args.sheet, args.line_width)
+    export_masks(args.sheet, args.line_width, args.patches_dir, args.json_dir)
