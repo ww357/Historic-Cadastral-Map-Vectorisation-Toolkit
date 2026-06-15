@@ -128,13 +128,34 @@ parcels:
   # weights: models/finetuned/sam_parcels_<name>_best.pth
 
 parcel_finetune:
-  # Fine-tuning config for steps/06_finetune/parcels/train.py
+  # Fine-tuning config for steps/03_finetune/parcels/train.py and steps/06_feedback/parcels/train.py
   epochs: 40
   batch_size: 1               # safe for 4 GB GPU at 1024px SAM input
   learning_rate: 0.00005      # lower than MapSAM polygon LR — small dataset
-  val_split: 0.15
+  val_split: 0.15             # fallback val split when no replay data exists
   early_stopping_patience: 12
   seed: 1234
+  # Replay buffer (06_feedback only): fraction of training samples drawn from the
+  # pre-training annotation pool (data/annotations/parcel/<sheets>/) to prevent
+  # the DoRA adapters drifting away from multi-sheet knowledge during feedback runs.
+  # 0.4 = 40% replay, 60% feedback corrections per epoch.
+  # Ignored by 03_finetune (which already trains on all sheets together).
+  replay_ratio: 0.4
+  # Minimum parcel mask area (pixels) for zoom-out augmentation to be applied.
+  # At native 0.5m/px resolution, 1500 px ≈ 375 m².  Parcels smaller than this
+  # are skipped for zoom-out because a 2× downscale would shrink them to ~375 px
+  # (~19×19), making the boundary signal too weak to learn from reliably.
+  min_zoom_area_px: 1500
+  # Number of negative (background) point prompts per training instance.  Sibling
+  # parcel centroids are used first (matching parcel_predict.py inference); when a
+  # patch has too few annotated neighbours the remainder are filled with points in
+  # a ring AROUND the target parcel so every instance gets dense negative coverage.
+  # Independent of parcels.max_neg_points (which controls inference).
+  # Set to 0 to disable negative prompting during training entirely.
+  neg_points: 0
+  # Width (px) of the ring around the target parcel from which fill negatives are
+  # drawn when there aren't enough sibling parcels.
+  neg_ring_px: 48
 
 text:
   # MapTextPipeline text spotting (run via MapReader's MapTextRunner)
