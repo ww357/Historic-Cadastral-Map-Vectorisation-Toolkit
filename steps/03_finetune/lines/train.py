@@ -337,10 +337,10 @@ def main():
     print(f"\nDone. Best path_f1={callbacks[0].best_f1:.4f}")
     print(f"Weights saved → {best_path.relative_to(ROOT)}")
     print(
-        f"\nNext step: run prediction then mend in QGIS, then run step 07 feedback:\n"
+        f"\nNext step: run prediction then mend in QGIS, then run step 06 feedback:\n"
         f"  python steps/04_predict/lines/predict.py --sheet {args.sheet}\n"
-        f"  python steps/07_feedback/lines/rasterise.py --sheet {args.sheet}\n"
-        f"  python steps/07_feedback/lines/train.py --sheet {args.sheet}"
+        f"  python steps/06_feedback/lines/rasterise.py --sheet {args.sheet}\n"
+        f"  python steps/06_feedback/lines/train.py --sheet {args.sheet}"
     )
 
 

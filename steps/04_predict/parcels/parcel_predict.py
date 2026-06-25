@@ -394,10 +394,13 @@ def main() -> None:
             dora_weights = _candidates[-1]
 
     use_dora = dora_weights is not None
-    # When using DoRA fine-tuned weights, pixel normalisation was trained with
-    # pixel_mean=[0,0,0], pixel_std=[1,1,1] — match this in model init.
-    _pixel_mean = [0, 0, 0] if use_dora else [123.675, 116.28,  103.53]
-    _pixel_std  = [1, 1, 1] if use_dora else [ 58.395,  57.12,   57.375]
+    # The parcel DoRA encoder is frozen at original SAM weights, so it expects the
+    # ImageNet-normalised input distribution SAM was pretrained on — exactly what
+    # steps/03_finetune/parcels/train.py now uses.  (The old pixel_mean=[0,0,0]
+    # left preprocess a no-op and fed the encoder raw [0,255], degrading every
+    # embedding.)  Both the DoRA and plain-SAM paths therefore use SAM defaults.
+    _pixel_mean = [123.675, 116.28, 103.53]
+    _pixel_std  = [ 58.395,  57.12,  57.375]
 
     sam, _ = sam_model_registry["vit_b"](
         image_size  = sam_size,
@@ -408,7 +411,7 @@ def main() -> None:
     )
 
     if use_dora:
-        dora_model = DoRA_Sam(sam, rank=int(cfg["mapsam"].get("rank", 4)))
+        dora_model = DoRA_Sam(sam, int(cfg["mapsam"].get("rank", 4)))
         dora_model.load_dora_parameters(str(dora_weights))
         dora_model.eval().to(device)
         predictor = SamPredictor(dora_model.sam)
