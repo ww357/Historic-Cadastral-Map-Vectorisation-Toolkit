@@ -82,17 +82,21 @@ def resolve_weights(args_weights, feature: str, finetuned_dir: Path,
             return candidates[-1]
 
     fallback_dir = mapsam_base_dir / "origional_weights"
+    _SAM_BASE = "sam_vit_b_01ec64.pth"   # plain SAM checkpoint — not DoRA weights
     if fallback_dir.exists():
-        candidates = sorted(fallback_dir.rglob("*.pth"), key=lambda p: p.stat().st_mtime)
+        candidates = sorted(
+            [p for p in fallback_dir.rglob("*.pth") if p.name != _SAM_BASE],
+            key=lambda p: p.stat().st_mtime,
+        )
         if candidates:
             return candidates[-1]
 
     sys.exit(
         f"No DoRA weights found for feature '{feature}'.\n"
-        f"  Searched (finetuned) : {finetuned_dir}\n"
-        f"  Searched (feature)   : {feature_base}\n"
-        f"  Searched (fallback)  : {fallback_dir}\n"
-        "Pass --weights <path> to specify explicitly."
+        f"  Searched (finetuned) : {finetuned_dir}  (mapsam_{feature}*_best.pth)\n"
+        f"  Searched (feature)   : {feature_base}  (*.pth)\n"
+        f"  Searched (fallback)  : {fallback_dir}  (*.pth, excluding {_SAM_BASE})\n"
+        f"Run step 03 to fine-tune MapSAM for '{feature}', or pass --weights <path>."
     )
 
 
@@ -115,7 +119,13 @@ def run_batch(net, batch_np: list[np.ndarray], img_size: int,
     Forward a list of (3, H, W) float32 arrays through the model.
     Returns a list of (H, W) uint8 binary masks (0 or 255).
     """
-    imgs = torch.from_numpy(np.stack(batch_np)).cuda()  # (B, 3, H, W)
+    # torch.from_numpy fails with NumPy 2.x when PyTorch was compiled against NumPy 1.x
+    # ("expected np.ndarray (got numpy.ndarray)"). Route through memoryview instead.
+    stacked = np.ascontiguousarray(np.stack(batch_np), dtype=np.float32)
+    imgs = (torch.frombuffer(memoryview(stacked), dtype=torch.float32)
+                .reshape(stacked.shape)
+                .clone()
+                .cuda())  # (B, 3, H, W)
     outputs, _ = net(imgs, multimask_output, img_size)
 
     # low_res_logits: (B, 1, 128, 128) — upsample to full patch resolution
@@ -129,7 +139,10 @@ def run_batch(net, batch_np: list[np.ndarray], img_size: int,
                               mode='bilinear', align_corners=False)  # (B, 1, H, W)
     preds = (torch.sigmoid(upsampled.squeeze(1)) > threshold).cpu().numpy()  # (B, H, W)
 
-    return [(p.astype(np.uint8) * 255) for p in preds]
+    # np.array(..., dtype=np.uint8) creates a fresh NumPy-2.x-native array,
+    # avoiding the stale internal dtype that torch .numpy() produces when PyTorch
+    # was compiled against NumPy 1.x (which causes PIL "Cannot handle this data type").
+    return [np.array(p, dtype=np.uint8) * 255 for p in preds]
 
 
 def predict(sheet_id: str, feature: str, weights_arg: str | None,
