@@ -69,14 +69,20 @@ if "PROJ_DATA" not in os.environ:
 try:
     import rasterio
     from rasterio.transform import Affine
+    from rasterio.features import shapes as rio_shapes
 except ImportError:
     sys.exit("rasterio is required:  conda install -c conda-forge rasterio")
 
 try:
     from scipy import ndimage as ndi
-    from skimage.segmentation import expand_labels, watershed
+    from skimage.segmentation import watershed
 except ImportError:
     sys.exit("scikit-image + scipy required:  pip install scikit-image scipy")
+
+try:
+    from shapely import wkb as shapely_wkb   # geometry parsing only — no PROJ/CRS
+except ImportError:
+    shapely_wkb = None
 
 
 # ── Config ─────────────────────────────────────────────────────────────────────
@@ -149,33 +155,79 @@ def read_gpkg_points_wkb(path: Path) -> list[dict]:
     return records
 
 
-# ── Vectorisation (cv2 contours → world coords; avoids rasterio.features) ──────
+# ── Mended boundary GeoPackage → rasterised line network ──────────────────────
 
-def mask_to_polygon_coords(region: np.ndarray, transform: "Affine",
-                           row_off: int, col_off: int) -> list | None:
+def resolve_mended(mended_dir: Path, sheet: str) -> Path | None:
+    """Return a hand-corrected boundary GeoPackage for the sheet, or None."""
+    if not mended_dir.exists():
+        return None
+    exact = mended_dir / f"{sheet}.gpkg"
+    if exact.exists():
+        return exact
+    matches = sorted(p for p in mended_dir.glob("*.gpkg")
+                     if sheet.lower() in p.stem.lower())
+    return matches[0] if matches else None
+
+
+def read_gpkg_lines_wkb(path: Path, layer: str = "boundaries") -> list[np.ndarray]:
     """
-    Convert a boolean sub-mask (cropped to its bbox at row_off/col_off) into a
-    GeoJSON polygon ring list in CRS coordinates, or None if degenerate.
-    Returns the largest exterior contour only.
+    Read LINESTRING / MULTILINESTRING geometries from a GeoPackage layer as a list
+    of (N, 2) world-coordinate arrays.  Strips the GPKG geometry header, then uses
+    shapely to parse the standard WKB (handles Z/M and multi-parts robustly).
     """
-    m = region.astype(np.uint8)
-    if not m.any():
-        return None
-    contours, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return None
-    largest = max(contours, key=cv2.contourArea)
-    if cv2.contourArea(largest) < 1 or len(largest) < 3:
-        return None
-    pts = largest.reshape(-1, 2).astype(np.float64)          # (col, row) within crop
-    cols = pts[:, 0] + col_off
-    rows = pts[:, 1] + row_off
-    xs = transform.c + cols * transform.a + rows * transform.b
-    ys = transform.f + cols * transform.d + rows * transform.e
-    ring = [[float(x), float(y)] for x, y in zip(xs, ys)]
-    if ring[0] != ring[-1]:
-        ring.append(ring[0])                                  # close the ring
-    return [ring]
+    if shapely_wkb is None:
+        sys.exit("shapely is required to read mended boundary GeoPackages.")
+    con = sqlite3.connect(str(path))
+    # Pick the requested layer if present, else the first LINESTRING feature table.
+    feats = [r[0] for r in con.execute(
+        "SELECT table_name FROM gpkg_contents WHERE data_type='features'")]
+    table = layer if layer in feats else None
+    if table is None:
+        for t in feats:
+            gt = con.execute("SELECT geometry_type_name FROM gpkg_geometry_columns "
+                             "WHERE table_name=?", (t,)).fetchone()
+            if gt and "LINE" in gt[0].upper():
+                table = t
+                break
+    if table is None:
+        con.close()
+        raise ValueError(f"No LINESTRING layer found in {path.name}")
+    geom_col = con.execute("SELECT column_name FROM gpkg_geometry_columns "
+                           "WHERE table_name=?", (table,)).fetchone()[0]
+    blobs = [r[0] for r in con.execute(f"SELECT [{geom_col}] FROM [{table}]")]
+    con.close()
+
+    lines: list[np.ndarray] = []
+    for blob in blobs:
+        if not blob or len(blob) < 8:
+            continue
+        env_type  = (blob[3] >> 1) & 0x07
+        env_bytes = [0, 32, 48, 48, 64]
+        wkb_start = 8 + (env_bytes[env_type] if env_type < 5 else 0)
+        try:
+            geom = shapely_wkb.loads(bytes(blob[wkb_start:]))
+        except Exception:
+            continue
+        parts = geom.geoms if geom.geom_type.startswith("Multi") else [geom]
+        for part in parts:
+            xy = np.asarray(part.coords, dtype=np.float64)
+            if xy.ndim == 2 and len(xy) >= 2:
+                lines.append(xy[:, :2])
+    return lines
+
+
+def rasterize_lines(lines: list[np.ndarray], transform: "Affine",
+                    H: int, W: int, width: int) -> np.ndarray:
+    """Draw world-coordinate polylines onto an (H, W) uint8 canvas (255 = boundary)."""
+    inv = ~transform                       # world → pixel affine
+    canvas = np.zeros((H, W), dtype=np.uint8)
+    for xy in lines:
+        cols = inv.a * xy[:, 0] + inv.b * xy[:, 1] + inv.c
+        rows = inv.d * xy[:, 0] + inv.e * xy[:, 1] + inv.f
+        pts  = np.column_stack([cols, rows]).round().astype(np.int32).reshape(-1, 1, 2)
+        cv2.polylines(canvas, [pts], isClosed=False, color=255,
+                      thickness=max(1, width))
+    return canvas
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -185,6 +237,8 @@ def main() -> None:
     ap.add_argument("--sheet", required=True, help="Sheet ID")
     ap.add_argument("--boundary", default=None,
                     help="Override boundary raster path (default: data/stitched/boundaries/<sheet>.tif)")
+    ap.add_argument("--no-mended", action="store_true",
+                    help="Ignore hand-corrected boundary GeoPackages in the mended folder")
     args = ap.parse_args()
     sheet = args.sheet
 
@@ -199,37 +253,63 @@ def main() -> None:
     use_mask    = bool(pcfg.get("use_map_mask", True))
     min_px      = int(pcfg.get("min_region_px", 64))
     points_file = pcfg.get("points_file", "Holnicote Apportionment Points.gpkg")
+    mended_dir  = ROOT / pcfg.get("mended_dir", "data/mended outputs")
+    mend_width  = int(pcfg.get("mended_line_width_px", 3))
 
-    boundary_path = (Path(args.boundary) if args.boundary
+    stitched_path = (Path(args.boundary) if args.boundary
                      else ROOT / paths["stitched"] / "boundaries" / f"{sheet}.tif")
     points_path   = resolve_points_file(ROOT / paths["parcel_points"], sheet, points_file)
     out_dir       = ROOT / paths["predictions"] / "parcels" / sheet
     out_geojson   = out_dir / "parcel_preds.geojson"
     out_preview   = out_dir / "parcel_segment_preview.png"
 
-    if not boundary_path.exists():
-        sys.exit(
-            f"Boundary raster not found: {boundary_path}\n"
-            "Run the lines pipeline first:\n"
-            f"  python steps/04_predict/lines/predict.py --sheet {sheet}\n"
-            f"  python steps/05_vectorise/lines/vectorise.py --sheet {sheet}"
-        )
     if not points_path.exists():
         sys.exit(f"Apportionment points not found: {points_path}")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # ── Boundary raster + georef ──────────────────────────────────────────────
-    with rasterio.open(boundary_path) as src:
-        boundary = src.read(1)
+    print(f"Sheet     : {sheet}")
+
+    # ── Boundary source: prefer a hand-corrected GeoPackage if present ────────
+    # The mended file holds the full corrected boundary polyline network (same
+    # "boundaries" layer as data/outputs/<sheet>.gpkg).  We rasterise those lines
+    # onto the sheet grid and use them instead of the raw model raster.
+    mended_path = None if args.no_mended else resolve_mended(mended_dir, sheet)
+
+    # Reference grid (transform / size / CRS) — from the stitched raster if it
+    # exists, else the raw GeoTIFF.  Both share the same grid.
+    grid_src = stitched_path if stitched_path.exists() else \
+               (ROOT / paths["raw"] / sheet / f"{sheet}.tif")
+    if not grid_src.exists():
+        sys.exit(
+            f"No boundary raster and no raw GeoTIFF to define the sheet grid:\n"
+            f"  stitched: {stitched_path}\n  raw     : {grid_src}\n"
+            "Run the lines pipeline (predict.py + vectorise.py) first."
+        )
+    with rasterio.open(grid_src) as src:
         transform = src.transform
+        H, W = src.height, src.width
         try:
             epsg = src.crs.to_epsg() or 27700
         except Exception:
             epsg = 27700
-    H, W = boundary.shape
-    print(f"Sheet     : {sheet}")
-    print(f"Boundary  : {boundary_path.relative_to(ROOT)}  ({W}×{H} px)")
-    print(f"Boundary px: {(boundary > 0).sum():,}  ({100*(boundary>0).mean():.2f}%)")
+
+    if mended_path is not None:
+        print(f"Boundary  : {mended_path.relative_to(ROOT)}  (MENDED, rasterised @ {mend_width}px)")
+        lines = read_gpkg_lines_wkb(mended_path)
+        boundary = rasterize_lines(lines, transform, H, W, mend_width)
+        print(f"  {len(lines):,} mended boundary lines  →  {W}×{H} px grid")
+    else:
+        if not stitched_path.exists():
+            sys.exit(
+                f"Boundary raster not found: {stitched_path}\n"
+                "Run the lines pipeline first:\n"
+                f"  python steps/04_predict/lines/predict.py --sheet {sheet}\n"
+                f"  python steps/05_vectorise/lines/vectorise.py --sheet {sheet}"
+            )
+        with rasterio.open(stitched_path) as src:
+            boundary = src.read(1)
+        print(f"Boundary  : {stitched_path.relative_to(ROOT)}  (model raster)")
+    print(f"Boundary px: {(boundary > 0).sum():,}  ({100*(boundary>0).mean():.2f}% of {W}×{H})")
 
     # ── Build the watershed surface (high = ridge/wall) ───────────────────────
     surf = (boundary > 0).astype(np.float32)
@@ -287,50 +367,56 @@ def main() -> None:
         sys.exit("No apportionment points fall within the sheet — nothing to segment.")
 
     if seed_dil > 0:
-        # Grow each single-pixel seed into a small disk so the marker is robust.
-        # expand_labels assigns every pixel the NEAREST label within `distance`,
-        # so adjacent seeds never overwrite one another.  (cv2.dilate cannot
-        # operate on int32 label images — it raises "Unsupported data type".)
-        markers = expand_labels(markers, distance=seed_dil).astype(np.int32)
+        # Grow each single-pixel seed into a small box so the marker is robust.
+        # grey_dilation propagates the max label within the window — for seeds a
+        # few px apart, collisions are vanishingly rare.  Crucially it is a
+        # SEPARABLE box operation (two cheap 1-D passes, no large temporaries),
+        # unlike skimage.expand_labels whose full-image distance transform with
+        # return_indices allocates an ~8 GB int64 index array on big sheets and
+        # gets OOM-killed (e.g. the 503M-px Luccombe sheet).  cv2.dilate is not an
+        # option either — it rejects int32 label images.
+        size = seed_dil * 2 + 1
+        markers = ndi.grey_dilation(markers, size=(size, size)).astype(np.int32)
 
     # ── Watershed ─────────────────────────────────────────────────────────────
     print(f"Watershed : sigma={sigma} close={close_px} seed_dilate={seed_dil} "
           f"compactness={compactness} ...")
     labels = watershed(surf, markers=markers, mask=mask, compactness=compactness)
 
-    # ── Vectorise each parcel region ──────────────────────────────────────────
-    print("Vectorising regions ...")
-    features = []
+    # ── Vectorise the whole label raster as ONE coverage ──────────────────────
+    # rasterio.features.shapes polygonises all labels in a single pass, tracing
+    # along pixel GRID LINES.  Adjacent parcels therefore share *identical* edge
+    # geometry (a gap-free, overlap-free coverage) — unlike per-label contour
+    # tracing, which left ~1px slivers between neighbours.  Interior holes are
+    # preserved too.  Coordinates come out in world units (transform applied).
+    print("Vectorising coverage (rasterio.features.shapes) ...")
+    feats = []
     dropped_small = 0
-    present = np.unique(labels)
-    for lab in present:
-        if lab == 0:
+    counts = np.bincount(labels.ravel().astype(np.int64))   # px per label, one pass
+    for geom, val in rio_shapes(labels.astype(np.int32), mask=(labels > 0),
+                                transform=transform, connectivity=4):
+        lab = int(val)
+        if lab <= 0:
             continue
-        ys, xs = np.where(labels == lab)
-        if len(xs) < min_px:
+        px = int(counts[lab]) if lab < len(counts) else 0
+        if px < min_px:
             dropped_small += 1
             continue
-        r0, r1 = ys.min(), ys.max() + 1
-        c0, c1 = xs.min(), xs.max() + 1
-        region = labels[r0:r1, c0:c1] == lab
-        rings = mask_to_polygon_coords(region, transform, r0, c0)
-        if rings is None:
-            continue
-        features.append({
+        rid = label_to_rowid.get(lab)
+        feats.append({
             "type": "Feature",
-            "geometry": {"type": "Polygon", "coordinates": rings},
+            "geometry": geom,                  # GeoJSON dict, already world coords
             "properties": {
-                "rowid": (int(label_to_rowid[lab])
-                          if label_to_rowid.get(lab) is not None
-                          and label_to_rowid[lab] == label_to_rowid[lab] else None),
-                "px_area": int(len(xs)),
+                "rowid": (int(rid) if rid is not None and rid == rid else None),
+                "px_area": px,
             },
         })
 
     crs_member = {"type": "name",
                   "properties": {"name": f"urn:ogc:def:crs:EPSG::{epsg}"}}
-    doc = {"type": "FeatureCollection", "crs": crs_member, "features": features}
+    doc = {"type": "FeatureCollection", "crs": crs_member, "features": feats}
     out_geojson.write_text(json.dumps(doc, separators=(",", ":")))
+    features = feats   # for the summary print below
 
     print(f"\n{'─'*50}")
     print(f"Parcels written : {len(features)}  (dropped {dropped_small} < {min_px}px)")
@@ -344,18 +430,21 @@ def main() -> None:
 
 def _write_preview(labels: np.ndarray, boundary: np.ndarray, out_path: Path,
                    max_dim: int = 2500) -> None:
-    """Colour each parcel randomly, overlay the boundary lines in black, downscale."""
+    """Colour each parcel randomly, overlay the boundary lines in black, downscale.
+
+    Downsamples (by integer stride) BEFORE colourising so we never allocate a
+    full-resolution RGB array — at ~400M px that would be >1 GB.
+    """
     H, W = labels.shape
+    step = max(1, int(np.ceil(max(H, W) / max_dim)))
+    lab_s = labels[::step, ::step]
+    bnd_s = boundary[::step, ::step]
     rng = np.random.default_rng(0)
     n = int(labels.max()) + 1
     lut = rng.integers(40, 255, size=(n, 3), dtype=np.uint8)
-    lut[0] = (30, 30, 30)                       # background
-    rgb = lut[labels.clip(0)]                    # (H, W, 3)
-    rgb[boundary > 0] = (0, 0, 0)                # boundary lines on top
-    scale = min(1.0, max_dim / max(H, W))
-    if scale < 1.0:
-        rgb = cv2.resize(rgb, (int(W*scale), int(H*scale)),
-                         interpolation=cv2.INTER_NEAREST)
+    lut[0] = (30, 30, 30)                        # background
+    rgb = lut[lab_s.clip(0)]                      # small (h, w, 3)
+    rgb[bnd_s > 0] = (0, 0, 0)                     # boundary lines on top
     cv2.imwrite(str(out_path), cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
 
 

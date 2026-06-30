@@ -1,13 +1,18 @@
 """
 Attribute-join and GeoPackage write for predicted parcel polygons.
 
-Reads parcel_preds.geojson produced by parcel_predict.py, joins all apportionment
-attribute columns from the original parcel_points GeoPackage (joined on rowid),
-applies a minimum-area filter and Douglas-Peucker simplification, then writes the
-result as a "parcels" layer in the sheet GeoPackage.
+Reads parcel_preds.geojson (produced by parcel_segment.py — the point-seeded
+watershed step), joins all apportionment attribute columns from the original
+parcel_points GeoPackage (joined on rowid), applies a minimum-area filter and
+Douglas-Peucker simplification, then writes the result as a "parcels" layer in
+the sheet GeoPackage.
 
-Run this in the polygons environment after parcel_predict.py has completed:
+This step is schema-driven (it only needs Features with a `rowid` property), so
+it is agnostic to how the polygons were produced.
+
+Run after parcel_segment.py has completed:
     conda activate polygons
+    python steps/04_predict/parcels/parcel_segment.py   --sheet Timberscombe
     python steps/05_vectorise/parcels/parcel_vectorise.py --sheet Timberscombe
 """
 
@@ -148,12 +153,26 @@ def read_gpkg_attrs(path: Path) -> pd.DataFrame:
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+def _resolve_in_dir(folder: Path, sheet_id: str, default_name: str) -> Path:
+    """Prefer a *.gpkg in `folder` whose name contains the sheet; else the default."""
+    if folder.exists():
+        matches = sorted(p for p in folder.glob("*.gpkg")
+                         if sheet_id.lower() in p.stem.lower())
+        if matches:
+            return matches[0]
+    return folder / default_name
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Join attributes and write parcels layer to GeoPackage."
     )
     parser.add_argument("--sheet", required=True,
-                        help="Sheet ID (must match a completed parcel_predict.py run)")
+                        help="Sheet ID (must match a completed parcel_segment.py run)")
+    parser.add_argument("--no-mended", action="store_true",
+                        help="Write to data/outputs/<sheet>.gpkg instead of the mended GeoPackage")
+    parser.add_argument("--output", default=None,
+                        help="Explicit output GeoPackage path (overrides default/mended resolution)")
     args = parser.parse_args()
     sheet_id = args.sheet
 
@@ -164,11 +183,26 @@ def main() -> None:
     min_area     = float(pcfg.get("min_area",           50.0))
     simplify_tol = float(pcfg.get("simplify_tolerance",  1.0))
     points_file  = pcfg.get("points_file", "Holnicote Apportionment Points.gpkg")
+    mended_dir   = ROOT / pcfg.get("mended_dir", "data/mended outputs")
 
     pred_geojson = (ROOT / paths["predictions"]
                     / "parcels" / sheet_id / "parcel_preds.geojson")
-    points_path  = ROOT / paths["parcel_points"] / points_file
-    gpkg_path    = ROOT / paths["outputs"] / f"{sheet_id}.gpkg"
+    # Match parcel_segment.py: prefer the sheet-specific points file for the
+    # attribute join (e.g. "Porlock Points.gpkg"), else the configured default.
+    points_path  = _resolve_in_dir(ROOT / paths["parcel_points"], sheet_id, points_file)
+
+    # Output target: write the `parcels` layer INTO the hand-corrected GeoPackage
+    # when one exists, so it sits alongside the mended boundary/text/Patch_Grid
+    # layers (ogr2ogr -update adds only this layer and preserves the others).
+    # Falls back to data/outputs/<sheet>.gpkg.
+    if args.output:
+        gpkg_path = Path(args.output)
+        if not gpkg_path.is_absolute():
+            gpkg_path = ROOT / gpkg_path
+    elif not args.no_mended and _resolve_in_dir(mended_dir, sheet_id, f"{sheet_id}.gpkg").exists():
+        gpkg_path = _resolve_in_dir(mended_dir, sheet_id, f"{sheet_id}.gpkg")
+    else:
+        gpkg_path = ROOT / paths["outputs"] / f"{sheet_id}.gpkg"
 
     if not pred_geojson.exists():
         sys.exit(
@@ -179,6 +213,11 @@ def main() -> None:
         sys.exit(f"Parcel points file not found: {points_path}")
 
     gpkg_path.parent.mkdir(parents=True, exist_ok=True)
+
+    is_mended = mended_dir in gpkg_path.parents
+    print(f"Points join : {points_path.name}")
+    print(f"Output GPKG : {gpkg_path.relative_to(ROOT)}"
+          f"{'   (MENDED — parcels layer added, other layers preserved)' if is_mended else ''}")
 
     # ── Load predictions (json + shapely — no pyproj CRS lookup) ─────────────
     print(f"Reading {pred_geojson.name} ...")
@@ -192,10 +231,20 @@ def main() -> None:
         removed = before - len(gdf)
         print(f"  Min-area filter ({min_area} m²): removed {removed}, kept {len(gdf)}")
 
-    # ── Simplify ──────────────────────────────────────────────────────────────
+    # ── Simplify (topology-preserving across the whole coverage) ──────────────
+    # A plain per-polygon .simplify() moves each shared edge independently, which
+    # re-opens slivers/overlaps between neighbouring parcels.  shapely.coverage_simplify
+    # simplifies the shared edge network ONCE, so adjacent parcels stay joined.
+    # Fall back to leaving edges unsimplified (gap-free but blocky) if unavailable.
     if simplify_tol > 0:
-        gdf["geometry"] = gdf.geometry.simplify(simplify_tol, preserve_topology=True)
-        print(f"  Simplified (tolerance={simplify_tol} m)")
+        try:
+            import shapely
+            simplified = shapely.coverage_simplify(gdf.geometry.values, simplify_tol)
+            gdf["geometry"] = list(simplified)
+            print(f"  Coverage-simplified (tolerance={simplify_tol} m; shared edges preserved)")
+        except Exception as exc:
+            print(f"  coverage_simplify unavailable ({type(exc).__name__}: {exc}); "
+                  "leaving edges unsimplified to avoid reintroducing slivers")
 
     # ── Attribute join (sqlite3 — no pyproj) ──────────────────────────────────
     print(f"Reading {points_path.name} for attribute join ...")

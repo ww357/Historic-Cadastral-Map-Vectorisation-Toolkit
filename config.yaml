@@ -109,52 +109,68 @@ annotation:
   line_width: 3       # px width used when rendering linestrip annotations into masks
 
 parcels:
-  # Point-prompted SAM parcel segmentation (step 04_predict/parcels + 05_vectorise/parcels)
-  # Uses SAM ViT-B — either plain base weights or DoRA fine-tuned weights if available.
-  # Apportionment centroid points act as SAM foreground prompts.
+  # ── Point-seeded watershed parcel extraction (ACTIVE method) ────────────────
+  # steps/04_predict/parcels/parcel_segment.py  +  steps/05_vectorise/parcels/parcel_vectorise.py
+  #
+  # No model training.  Consumes the full-sheet boundary raster already produced
+  # by the lines pipeline (data/stitched/boundaries/<sheet>.tif) and the
+  # apportionment centroid points, then partitions the sheet with a
+  # marker-controlled watershed: each apportionment point is a seed, the
+  # (smoothed) boundary lines are ridges, and every pixel is assigned to the
+  # nearest enclosed parcel.  Parcel extent is defined by the boundaries, so it
+  # handles wildly different parcel sizes natively, and N points → N parcels.
   points_file: Holnicote Apportionment Points.gpkg  # filename within paths.parcel_points/
-  tile_size: 1024         # px to read from the raw TIF per tile (== sam_input_size → no downsampling)
-  sam_input_size: 1024    # SAM encoder input size; tile_size == sam_input_size → scale = 1.0
-  overlap: 128            # px overlap between adjacent tiles (half applied each side)
-  min_area: 50.0          # m² — discard predicted polygons smaller than this
-  simplify_tolerance: 1.0 # Douglas-Peucker tolerance in CRS units (metres for BNG)
-  max_neg_points: 6       # neighbouring centroids in same tile used as SAM background prompts (0 = off)
-  # Adaptive scale for large parcels: if the predicted mask touches the tile border,
-  # re-predict at 2× tile size (downsampled to sam_input_size) to capture the full boundary.
-  adaptive_scale: true         # set false to disable the 2× retry
-  border_margin_px: 4          # pixels from edge counted as "touching border"
-  adaptive_max_fill: 0.80      # reject 2× result if it fills > this fraction (failed prediction)
-  # Fine-tuned weights (set automatically by train.py, or override manually):
-  # weights: models/finetuned/sam_parcels_<name>_best.pth
 
-parcel_finetune:
-  # Fine-tuning config for steps/03_finetune/parcels/train.py and steps/06_feedback/parcels/train.py
+  # Watershed surface shaping — these bridge the dashed/gappy boundaries that
+  # made strict polygonisation fail.  The seeds provide topological closure; the
+  # lines only need to bias where adjacent parcels are cut apart.
+  boundary_smooth_sigma: 2.0   # Gaussian blur (px) turning dashed/broken lines into soft
+                               #   continuous ridges. 0 = off. Raise to bridge bigger gaps.
+  boundary_close_px: 3         # morphological closing (px) of the boundary before smoothing,
+                               #   to join colinear dashes. 0 = off.
+  seed_dilate_px: 4            # radius (px) each apportionment point seed is grown to (robustness)
+  compactness: 0.0             # skimage watershed compactness. 0 = follow boundaries strictly;
+                               #   small values (e.g. 1e-3) add a Voronoi-like pull that keeps
+                               #   parcels sensible where the boundary is missing entirely.
+  use_map_mask: true           # constrain the watershed to data/map_area_masks/<sheet> if present
+  min_region_px: 64            # drop watershed regions smaller than this many px before vectorising
+
+  # Hand-corrected boundaries: if a GeoPackage for the sheet exists in this folder,
+  # its "boundaries" line layer is rasterised and used INSTEAD of the model raster.
+  # (Override per-run with --no-mended.)
+  mended_dir: data/mended outputs   # folder of QGIS-corrected boundary GeoPackages
+  mended_line_width_px: 3           # px width to rasterise mended boundary lines at
+
+  # Shared with parcel_vectorise.py (attribute join + GeoPackage write):
+  min_area: 50.0               # m² — discard parcels smaller than this
+  simplify_tolerance: 1.0      # Douglas-Peucker tolerance in CRS units (metres for BNG)
+
+# ── ARCHIVED: point-prompted SAM parcel approach (superseded by watershed) ─────
+# Kept for reference only. Scripts live in temp/sam_parcels/. Not read by any
+# active script. To revive, restore temp/sam_parcels/* and rename these keys back
+# to `parcels:` / `parcel_finetune:`.
+sam_parcels_archived:
+  points_file: Holnicote Apportionment Points.gpkg
+  tile_size: 1024
+  sam_input_size: 1024
+  overlap: 128
+  min_area: 50.0
+  simplify_tolerance: 1.0
+  max_neg_points: 6
+  adaptive_scale: true
+  border_margin_px: 4
+  adaptive_max_fill: 0.80
+
+parcel_finetune_archived:
   epochs: 40
-  batch_size: 1               # safe for 4 GB GPU at 1024px SAM input
-  learning_rate: 0.00005      # lower than MapSAM polygon LR — small dataset
-  val_split: 0.15             # fallback val split when no replay data exists
+  batch_size: 1
+  learning_rate: 0.00005
+  val_split: 0.15
   early_stopping_patience: 12
   seed: 1234
-  # Replay buffer (06_feedback only): fraction of training samples drawn from the
-  # pre-training annotation pool (data/annotations/parcel/<sheets>/) to prevent
-  # the DoRA adapters drifting away from multi-sheet knowledge during feedback runs.
-  # 0.4 = 40% replay, 60% feedback corrections per epoch.
-  # Ignored by 03_finetune (which already trains on all sheets together).
   replay_ratio: 0.4
-  # Minimum parcel mask area (pixels) for zoom-out augmentation to be applied.
-  # At native 0.5m/px resolution, 1500 px ≈ 375 m².  Parcels smaller than this
-  # are skipped for zoom-out because a 2× downscale would shrink them to ~375 px
-  # (~19×19), making the boundary signal too weak to learn from reliably.
   min_zoom_area_px: 1500
-  # Number of negative (background) point prompts per training instance.  Sibling
-  # parcel centroids are used first (matching parcel_predict.py inference); when a
-  # patch has too few annotated neighbours the remainder are filled with points in
-  # a ring AROUND the target parcel so every instance gets dense negative coverage.
-  # Independent of parcels.max_neg_points (which controls inference).
-  # Set to 0 to disable negative prompting during training entirely.
   neg_points: 0
-  # Width (px) of the ring around the target parcel from which fill negatives are
-  # drawn when there aren't enough sibling parcels.
   neg_ring_px: 48
 
 text:
