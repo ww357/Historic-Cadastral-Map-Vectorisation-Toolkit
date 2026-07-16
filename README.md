@@ -1,14 +1,56 @@
 
 This is a toolkit for comprehensive semi-automated vectorisation of cadastral map series with a built-in feedback loop to iteratively improve prediction capabilities and reduce mending effort over time. Each feature is an individual binary segmentation model, and any combination of features can be selected and compiled from map patch predictions into a GeoPackage of full map vector layers. Land parcels are derived separately, by partitioning the boundary-line network using the recorded apportionment points as seeds (a point-seeded watershed), so no per-parcel model training is required.
 
-Initial setup:
+The pipeline was initially developed for use with the [Tithe Maps of England and Wales]() to target, with each model,:
+- Solid boundary lines between land parcels with a modified version of [this improved U-Net architecture]() and model weights that have only been trained on tithe map training data (~300 map patches across 12(?) sample maps). Symbology such as building outlines and watercourses that are not land parcel boundaries, yet are morphologically identical, were also annotated to avoid bad prediction from the model's lack of additional semantic knowledge.
+- Water (watercourses and waterbodies), land cover symbology (all different symbology together in one class to account for inter-map sheet variability requiring post-prediction manual classification aka filling in an attribute field), and house footprints with [MapSAM](https://arxiv.org/abs/2411.06971). Derived from SAM and fine-tuned for the historic map domain, minimal few-shot fine-tuning is required to produce high-accuracy prediction for each class. 
+- Text with the use of  
+
+
+
+Download's and Pre-requisites:
+- This pipeline was built in Windows Subsystem for Linux (WSL) because of package and library agreements. 
+- The anaconda environments are set up to work best with an NVIDIA GPU.
+- Set up the following conda environments:
 ```python
 conda env create -f envs/maptools.yml   # annotation, patchify, and vectorising
 conda env create -f envs/polygons.yml   # MapReader-wrapped text detection and MapSAM feature detection
 conda env create -f envs/lines.yml      # boundary line detection U-Net
 Running through the pipeline:
 ```
+- Clone the necessary repositories into the `models/` folder
+- Add model weights into the `models/base/` folder from [my huggingface](https://huggingface.co/ww357)
 
+File structure:
+``` bash
+repo root/
+│
+├── data/
+│   ├── raw/<SHEET>/<SHEET>.tif        ← [YOU] GeoTIFF map scan
+│   ├── parcel_points/*.gpkg            ← [YOU] land parcel centroids
+│   │
+│   ├── map_area_masks/                 (drawn by step 00)
+│   ├── patches/                        (created by step 01)
+│   ├── annotations/                    (created by step 02)
+│   ├── predictions/                    (created by steps 03-04)
+│   └── outputs/<SHEET>.gpkg            (final GeoPackage — step 05)
+│
+├── models/
+│   ├── ImprovedLinearUNet/             ← [YOU] clone from GitHub (https://github.com/ww357/Improved-Linear-U-Net)
+│   ├── MapSAM/                         ← [YOU] clone from GitHub (https://github.com/ww357/MapSAM)
+│   ├── MapTextPipeline/                ← [YOU] clone from GitHub (https://github.com/maps-as-data/MapTextPipeline)
+│   │
+│   ├── base/
+│   │   ├── unet/model_weights.weights.h5            ← [YOU] U-Net weights (https://huggingface.co/ww357/Improved-Linear-U-Net)
+│   │   ├── MapSAM/origional_weights/sam_vit_b_01ec64.pth  ← [YOU] SAM checkpoint (https://huggingface.co/ww357/MapSAM-Tithe-Map-Features)
+│   │   └── MapTextPipeline/rumsey-finetune.pth      ← [YOU] text weights downloaded from [here]()
+│   │
+│   └── finetuned/                      (all generated — never place files here manually)
+│
+├── steps/                              (pipeline scripts — do not edit)
+├── envs/maptools.yml                   ← use to build the maptools conda env
+└── config.yaml                         ← pipeline parameters
+```
 
 Running through the pipeline:
 ```python
