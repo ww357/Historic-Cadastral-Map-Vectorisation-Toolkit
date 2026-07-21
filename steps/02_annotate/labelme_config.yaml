@@ -3,6 +3,7 @@
 #
 # Example feature labels (type one of these as the shape label):
 #   boundary   → linestrip  — land parcel boundary lines
+#   dashed     → linestrip  — dashed/gappy boundary lines (parish bounds, tenure splits, etc.)
 #   water      → polygon    — water features
 #   building   → polygon    — building footprints
 #   vegetation → polygon    — any land cover class symbology
@@ -11,6 +12,7 @@
 
 labels:
   - boundary
+  - dashed
   - water
   - building
   - damage
