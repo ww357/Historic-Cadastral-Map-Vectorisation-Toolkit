@@ -16,10 +16,33 @@ broken line, the two flood basins simply meet at the weak ridge between them —
 the seeds supply the closure that the ink lacks.  This is the key reason the
 gaps/dashes that defeated strict polygonisation are tolerable here.
 
+What defines parcel extent (configurable):
+    Several feature layers can contribute to the "walls" the flood will not
+    cross — not just the solid boundary lines:
+      * extent_features (--extent): footprints that act as WALLS but stay inside
+        parcels.  Solid lines (boundaries), dashed lines, and areal features such
+        as building outlines or waterways.  Dashed lines get a softer ridge weight
+        because a dashed line is often a path rather than a border (see below).
+      * exclude_features (--exclude): areal features CARVED OUT of every parcel
+        (they become holes), for lakes/rivers that belong to no parcel.
+
+    Dashed-line pathways: a double dashed line drawn as a track/path is not a
+    parcel border.  It is handled by the seed logic — a path corridor with no
+    apportionment seed inside it is flooded by its neighbours rather than split
+    off as its own parcel — plus the softer dashed ridge weight so real solid
+    borders dominate where they coincide.
+
+Recorded-size guidance:
+    If the apportionment table records each parcel's area, that is used as a fuzzy
+    cap so a parcel does not run away where a border is missing: the nearest-to-
+    seed pixels up to size_factor × recorded area are kept and the overflow is
+    released to unassigned background.  Only parcels over the tolerance are trimmed.
+
 Inputs (all already produced by earlier pipeline steps):
-    data/stitched/boundaries/<sheet>.tif      — full-sheet boundary raster (lines step)
+    data/stitched/<feature>/<sheet>.tif       — full-sheet feature rasters (boundaries, dashed, ...)
     data/parcel_points/<points_file>          — apportionment centroid points (GeoPackage)
     data/map_area_masks/<sheet>/<sheet>.png   — optional map-area mask
+    data/mended outputs/<sheet>.gpkg          — optional hand-corrected boundary/dashed line layers
 
 Output (schema matches the old SAM step, so 05_vectorise/parcels works unchanged):
     data/predictions/parcels/<sheet>/parcel_preds.geojson   — one Polygon per parcel, with rowid
@@ -28,6 +51,8 @@ Output (schema matches the old SAM step, so 05_vectorise/parcels works unchanged
 Usage:
     conda activate polygons        # (or lines) — needs scikit-image, scipy, rasterio
     python steps/04_predict/parcels/parcel_segment.py --sheet Timberscombe
+    python steps/04_predict/parcels/parcel_segment.py --sheet Timberscombe \
+        --extent boundaries dashed building --exclude water
 
 Then:
     python steps/05_vectorise/parcels/parcel_vectorise.py --sheet Timberscombe
@@ -230,6 +255,163 @@ def rasterize_lines(lines: list[np.ndarray], transform: "Affine",
     return canvas
 
 
+# ── Feature layers (extent barriers + exclusions) ──────────────────────────────
+
+# 'boundaries'/'dashed' are LINEAR (thin polyline rasters, and can come from a
+# mended GeoPackage line layer); everything else is an AREAL prediction raster.
+_LINEAR_FEATURES = {"boundaries", "dashed"}
+
+
+def _canon_feature(name: str) -> str:
+    """'lines' is a user-facing alias for the 'boundaries' folder/layer."""
+    return "boundaries" if name.lower() == "lines" else name.lower()
+
+
+def load_feature_binary(feature: str, sheet: str, cfg: dict,
+                        transform: "Affine", H: int, W: int,
+                        mended_path: Path | None, mend_width: int,
+                        override_path: Path | None = None) -> np.ndarray | None:
+    """
+    Return an (H, W) bool array (True = feature present) for one feature, or None
+    if no source raster/layer exists for it.
+
+    override_path (from --boundary) wins if given.  Otherwise boundaries/dashed
+    prefer a mended GeoPackage line layer (rasterised) when a mended file is in
+    play, and every feature falls back to its stitched raster at
+    data/stitched/<feature>/<sheet>.tif.
+    """
+    paths = cfg["paths"]
+    feature = _canon_feature(feature)
+
+    # Explicit raster override (e.g. --boundary custom.tif for the boundaries layer).
+    if override_path is not None:
+        if not override_path.exists():
+            sys.exit(f"--boundary raster not found: {override_path}")
+        with rasterio.open(override_path) as src:
+            arr = src.read(1)
+        if (arr.shape[1], arr.shape[0]) != (W, H):
+            arr = cv2.resize(arr, (W, H), interpolation=cv2.INTER_NEAREST)
+        return arr > 0
+
+    # Linear features from a mended GeoPackage line layer, if available.
+    if feature in _LINEAR_FEATURES and mended_path is not None:
+        layer = "boundaries" if feature == "boundaries" else feature
+        try:
+            lines = read_gpkg_lines_wkb(mended_path, layer=layer)
+            if lines:
+                return rasterize_lines(lines, transform, H, W, mend_width) > 0
+        except ValueError:
+            pass  # layer absent in this mended file — fall through to stitched raster
+
+    stitched = ROOT / paths["stitched"] / feature / f"{sheet}.tif"
+    if not stitched.exists():
+        return None
+    with rasterio.open(stitched) as src:
+        arr = src.read(1)
+    if (arr.shape[1], arr.shape[0]) != (W, H):
+        arr = cv2.resize(arr, (W, H), interpolation=cv2.INTER_NEAREST)
+    return arr > 0
+
+
+# ── Recorded parcel area (fuzzy size cap) ──────────────────────────────────────
+
+_AREA_UNIT_M2 = {
+    "acres": 4046.8564224,
+    "acre":  4046.8564224,
+    "ha":    10000.0,
+    "hectare": 10000.0,
+    "hectares": 10000.0,
+    "m2":    1.0,
+    "sqm":   1.0,
+    "perches": 25.29285264,
+    "perch":   25.29285264,
+}
+
+# Common apportionment area column names, lower-cased, in preference order.
+_AREA_COLUMN_CANDIDATES = [
+    "area", "acreage", "acres", "statute_area", "statute area",
+    "area_acres", "quantity", "size", "area_m2",
+]
+
+
+def detect_area_column(records: list[dict], configured: str | None) -> str | None:
+    """Pick the apportionment area column: the configured name if present and
+    numeric, else the first common candidate whose values are mostly numeric."""
+    if not records:
+        return None
+    cols = [c for c in records[0].keys() if not c.startswith("_geom")]
+    lower = {c.lower(): c for c in cols}
+
+    def mostly_numeric(col: str) -> bool:
+        vals = [r.get(col) for r in records]
+        ok = sum(1 for v in vals if _as_float(v) is not None)
+        return ok >= max(1, int(0.5 * len(vals)))
+
+    if configured:
+        if configured in cols and mostly_numeric(configured):
+            return configured
+        if configured.lower() in lower and mostly_numeric(lower[configured.lower()]):
+            return lower[configured.lower()]
+        return None  # explicit request that isn't usable — don't silently guess
+
+    for cand in _AREA_COLUMN_CANDIDATES:
+        if cand in lower and mostly_numeric(lower[cand]):
+            return lower[cand]
+    return None
+
+
+def _as_float(v) -> float | None:
+    if v is None:
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if f == f and f > 0 else None   # reject NaN and non-positive
+
+
+def apply_size_cap(labels: np.ndarray,
+                   seed_rc: dict[int, tuple[int, int]],
+                   target_px: dict[int, float],
+                   size_factor: float) -> tuple[np.ndarray, int, int]:
+    """
+    Trim parcels that flooded far past their recorded area.
+
+    For each labelled region with a recorded target, if its pixel count exceeds
+    size_factor × target it is cut back to the size_factor × target pixels
+    NEAREST the seed (Euclidean), and the farther overflow is released to
+    background (label 0) for the operator to mend.  The in-budget core keeps its
+    boundary-defined shape; only the runaway overflow is clipped.
+
+    Works on per-label bounding-box crops (ndi.find_objects) so cost scales with
+    the runaway parcels, not the full sheet.  Returns (labels, n_capped,
+    n_released).
+    """
+    slices = ndi.find_objects(labels)   # index l-1 → tuple of slices (or None)
+    n_capped = n_released = 0
+    for lab, (sr, sc) in seed_rc.items():
+        tgt = target_px.get(lab)
+        if not tgt:
+            continue
+        max_px = max(1, int(size_factor * tgt))   # never erase an entire parcel
+        if lab - 1 >= len(slices):
+            continue
+        sl = slices[lab - 1]
+        if sl is None:
+            continue
+        sub = labels[sl]
+        ys, xs = np.where(sub == lab)
+        if ys.size <= max_px:
+            continue                       # within tolerance — leave shape intact
+        # Distances from the seed (translated into crop coordinates).
+        d = (ys - (sr - sl[0].start))**2 + (xs - (sc - sl[1].start))**2
+        far = np.argpartition(d, max_px)[max_px:]   # indices of the overflow
+        labels[sl[0].start + ys[far], sl[1].start + xs[far]] = 0
+        n_capped += 1
+        n_released += int(far.size)
+    return labels, n_capped, n_released
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -239,6 +421,15 @@ def main() -> None:
                     help="Override boundary raster path (default: data/stitched/boundaries/<sheet>.tif)")
     ap.add_argument("--no-mended", action="store_true",
                     help="Ignore hand-corrected boundary GeoPackages in the mended folder")
+    ap.add_argument("--extent", nargs="+", default=None, metavar="FEATURE",
+                    help="Features whose footprint acts as a wall the flood will not cross "
+                         "(kept inside parcels). e.g. --extent boundaries dashed building. "
+                         "Overrides parcels.extent_features. 'lines' == 'boundaries'.")
+    ap.add_argument("--exclude", nargs="+", default=None, metavar="FEATURE",
+                    help="Areal features carved out of every parcel (become holes), "
+                         "e.g. --exclude water. Overrides parcels.exclude_features.")
+    ap.add_argument("--no-size", action="store_true",
+                    help="Ignore recorded apportionment area (disable the fuzzy size cap for this run).")
     args = ap.parse_args()
     sheet = args.sheet
 
@@ -256,6 +447,24 @@ def main() -> None:
     mended_dir  = ROOT / pcfg.get("mended_dir", "data/mended outputs")
     mend_width  = int(pcfg.get("mended_line_width_px", 3))
 
+    # Extent / exclusion feature sets (CLI overrides config).
+    extent_features  = [_canon_feature(f) for f in
+                        (args.extent  if args.extent  is not None
+                         else pcfg.get("extent_features", ["boundaries"]))]
+    exclude_features = [_canon_feature(f) for f in
+                        (args.exclude if args.exclude is not None
+                         else pcfg.get("exclude_features", []))]
+    # A feature can't be both a wall and a hole; exclusion wins (explicit carve-out).
+    extent_features  = [f for f in dict.fromkeys(extent_features) if f not in exclude_features]
+    exclude_features = list(dict.fromkeys(exclude_features))
+    dashed_weight   = float(pcfg.get("dashed_barrier_weight", 0.6))
+    feature_weight  = float(pcfg.get("feature_barrier_weight", 1.0))
+
+    use_size    = bool(pcfg.get("use_recorded_size", True)) and not args.no_size
+    size_column = pcfg.get("size_column", None)
+    size_unit   = str(pcfg.get("size_unit", "acres")).lower()
+    size_factor = float(pcfg.get("size_factor", 1.8))
+
     stitched_path = (Path(args.boundary) if args.boundary
                      else ROOT / paths["stitched"] / "boundaries" / f"{sheet}.tif")
     points_path   = resolve_points_file(ROOT / paths["parcel_points"], sheet, points_file)
@@ -268,15 +477,17 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Sheet     : {sheet}")
+    print(f"Extent    : {', '.join(extent_features) or '(none!)'}"
+          + (f"   |  Exclude: {', '.join(exclude_features)}" if exclude_features else ""))
 
-    # ── Boundary source: prefer a hand-corrected GeoPackage if present ────────
-    # The mended file holds the full corrected boundary polyline network (same
-    # "boundaries" layer as data/outputs/<sheet>.gpkg).  We rasterise those lines
-    # onto the sheet grid and use them instead of the raw model raster.
+    # Prefer a hand-corrected GeoPackage for the linear layers (boundaries/dashed)
+    # if one exists — its mended line layers are rasterised in load_feature_binary.
     mended_path = None if args.no_mended else resolve_mended(mended_dir, sheet)
+    if mended_path is not None:
+        print(f"Mended    : {mended_path.relative_to(ROOT)}  (line layers used where present)")
 
-    # Reference grid (transform / size / CRS) — from the stitched raster if it
-    # exists, else the raw GeoTIFF.  Both share the same grid.
+    # Reference grid (transform / size / CRS) — from the stitched boundary raster
+    # if it exists, else the raw GeoTIFF.  Both share the same grid.
     grid_src = stitched_path if stitched_path.exists() else \
                (ROOT / paths["raw"] / sheet / f"{sheet}.tif")
     if not grid_src.exists():
@@ -293,33 +504,60 @@ def main() -> None:
         except Exception:
             epsg = 27700
 
-    if mended_path is not None:
-        print(f"Boundary  : {mended_path.relative_to(ROOT)}  (MENDED, rasterised @ {mend_width}px)")
-        lines = read_gpkg_lines_wkb(mended_path)
-        boundary = rasterize_lines(lines, transform, H, W, mend_width)
-        print(f"  {len(lines):,} mended boundary lines  →  {W}×{H} px grid")
-    else:
-        if not stitched_path.exists():
-            sys.exit(
-                f"Boundary raster not found: {stitched_path}\n"
-                "Run the lines pipeline first:\n"
-                f"  python steps/04_predict/lines/predict.py --sheet {sheet}\n"
-                f"  python steps/05_vectorise/lines/vectorise.py --sheet {sheet}"
-            )
-        with rasterio.open(stitched_path) as src:
-            boundary = src.read(1)
-        print(f"Boundary  : {stitched_path.relative_to(ROOT)}  (model raster)")
-    print(f"Boundary px: {(boundary > 0).sum():,}  ({100*(boundary>0).mean():.2f}% of {W}×{H})")
+    # ── Build the watershed ridge surface from all extent features ────────────
+    # Each feature contributes a weighted ridge; we take the max so solid lines
+    # (weight 1.0) dominate dashed lines (softer) where they coincide.  Only
+    # boundaries/dashed are linear; areal features (building/water) add their
+    # filled footprint as a barrier plateau.  boundary_vis is the union of the
+    # LINEAR barriers, kept only for the preview overlay.
+    surf        = np.zeros((H, W), dtype=np.float32)
+    boundary_vis = np.zeros((H, W), dtype=bool)
+    found_any   = False
+    for feat in extent_features:
+        # --boundary overrides the raster used for the 'boundaries' feature only.
+        override = Path(args.boundary) if (feat == "boundaries" and args.boundary) else None
+        b = load_feature_binary(feat, sheet, cfg, transform, H, W, mended_path,
+                                mend_width, override_path=override)
+        if b is None:
+            print(f"  extent '{feat}': no raster/layer found — skipped")
+            continue
+        weight = (1.0 if feat == "boundaries"
+                  else dashed_weight if feat == "dashed"
+                  else feature_weight)
+        np.maximum(surf, weight * b.astype(np.float32), out=surf)
+        if feat in _LINEAR_FEATURES:
+            boundary_vis |= b
+        found_any = True
+        print(f"  extent '{feat}': {int(b.sum()):,} px  (weight {weight})")
+        del b
+    if not found_any:
+        sys.exit(
+            "None of the extent features produced a raster — nothing to wall the flood.\n"
+            f"  Wanted: {', '.join(extent_features)}\n"
+            "Run the relevant predict + vectorise steps, or pass --extent with an available feature."
+        )
 
-    # ── Build the watershed surface (high = ridge/wall) ───────────────────────
-    surf = (boundary > 0).astype(np.float32)
+    # Areal features to carve OUT of every parcel (become holes in the coverage).
+    exclude_mask = np.zeros((H, W), dtype=bool)
+    for feat in exclude_features:
+        b = load_feature_binary(feat, sheet, cfg, transform, H, W, mended_path, mend_width)
+        if b is None:
+            print(f"  exclude '{feat}': no raster found — skipped")
+            continue
+        exclude_mask |= b
+        print(f"  exclude '{feat}': {int(b.sum()):,} px carved out")
+        del b
+
+    # Shape the ridge surface: close colinear dashes, smooth to bridge gaps, clip.
+    # (Do this once on the combined weighted surface — same cost as the old
+    # single-boundary path — and clip rather than divide by max, so the weight
+    # ratios between solid and dashed ridges survive.)
     if close_px > 0:
         k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_px*2+1, close_px*2+1))
         surf = cv2.morphologyEx(surf, cv2.MORPH_CLOSE, k)
     if sigma > 0:
         surf = ndi.gaussian_filter(surf, sigma=sigma)
-    if surf.max() > 0:
-        surf = surf / surf.max()
+    np.clip(surf, 0.0, 1.0, out=surf)
 
     # ── Optional map-area mask ────────────────────────────────────────────────
     mask = None
@@ -338,13 +576,32 @@ def main() -> None:
         if mask is None:
             print("Map mask  : none found — partitioning full sheet")
 
+    # Carve excluded features out of the flood area (holes in the coverage).
+    if exclude_mask.any():
+        mask = (~exclude_mask) if mask is None else (mask & ~exclude_mask)
+
     # ── Seeds from apportionment points ───────────────────────────────────────
     print(f"Points file: {points_path.name}")
     pts = read_gpkg_points_wkb(points_path)
+
+    # Recorded-area column for the fuzzy size cap (fixed pixel area for the sheet).
+    area_col = detect_area_column(pts, size_column) if use_size else None
+    unit_m2  = _AREA_UNIT_M2.get(size_unit)
+    pixel_area_m2 = abs(transform.a * transform.e)
+    if use_size and area_col and unit_m2:
+        print(f"Size guide : column '{area_col}'  unit={size_unit}  "
+              f"factor={size_factor}  (pixel={pixel_area_m2:.3f} m²)")
+    elif use_size:
+        why = ("no numeric area column found" if not area_col
+               else f"unknown size_unit '{size_unit}'")
+        print(f"Size guide : disabled — {why}")
+
     inv_a = 1.0 / transform.a
     inv_e = 1.0 / transform.e
     markers = np.zeros((H, W), dtype=np.int32)
     label_to_rowid: dict[int, object] = {}
+    label_to_seed_rc: dict[int, tuple[int, int]] = {}
+    label_to_target_px: dict[int, float] = {}
     label = 0
     seeded = skipped = 0
     for rec in pts:
@@ -361,10 +618,17 @@ def main() -> None:
         label += 1
         markers[row, col] = label
         label_to_rowid[label] = rec.get("rowid", None)
+        label_to_seed_rc[label] = (row, col)
+        if area_col and unit_m2:
+            a = _as_float(rec.get(area_col))
+            if a is not None:
+                label_to_target_px[label] = (a * unit_m2) / pixel_area_m2
         seeded += 1
     print(f"Points    : {seeded} seeded, {skipped} outside sheet/mask  (of {len(pts)})")
     if seeded == 0:
         sys.exit("No apportionment points fall within the sheet — nothing to segment.")
+    if area_col:
+        print(f"           {len(label_to_target_px)} of {seeded} seeds have a recorded area")
 
     if seed_dil > 0:
         # Grow each single-pixel seed into a small box so the marker is robust.
@@ -382,6 +646,14 @@ def main() -> None:
     print(f"Watershed : sigma={sigma} close={close_px} seed_dilate={seed_dil} "
           f"compactness={compactness} ...")
     labels = watershed(surf, markers=markers, mask=mask, compactness=compactness)
+
+    # ── Fuzzy size cap: rein in parcels that ran away past their recorded area ──
+    if label_to_target_px:
+        labels, capped, released = apply_size_cap(
+            labels, label_to_seed_rc, label_to_target_px, size_factor
+        )
+        print(f"Size cap  : trimmed {capped} runaway parcel(s), "
+              f"released {released:,} px to background")
 
     # ── Vectorise the whole label raster as ONE coverage ──────────────────────
     # rasterio.features.shapes polygonises all labels in a single pass, tracing
@@ -423,7 +695,7 @@ def main() -> None:
     print(f"GeoJSON → {out_geojson.relative_to(ROOT)}")
 
     # ── Preview PNG (random colours per parcel over the boundary lines) ────────
-    _write_preview(labels, boundary, out_preview)
+    _write_preview(labels, boundary_vis, out_preview)
     print(f"Preview → {out_preview.relative_to(ROOT)}")
     print(f"\nNext:  python steps/05_vectorise/parcels/parcel_vectorise.py --sheet {sheet}")
 
