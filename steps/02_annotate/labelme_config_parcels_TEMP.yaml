@@ -1,0 +1,14 @@
+# Labelme config for parcel annotation on 1024px patches.
+# Passed to labelme via --config at launch.
+#
+# Draw filled polygons with label "parcel" around each land parcel.
+# One shape per parcel — annotate as many as you can see clearly on each patch.
+#
+labels:
+  - parcel
+
+auto_save: false
+keep_prev: false
+
+shortcuts:
+  create_polygon: "P"
