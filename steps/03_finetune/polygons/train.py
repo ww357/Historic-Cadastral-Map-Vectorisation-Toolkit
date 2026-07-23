@@ -16,8 +16,12 @@ Usage
 
 Weight search order (when --weights is not given):
     1. models/finetuned/mapsam_<feature>*_best.pth  (most recent fine-tuned)
-    2. models/base/MapSAM/<feature>/                (feature-specific base weights)
-    3. models/base/MapSAM/origional_weights/        (generic SAM DoRA fallback)
+    2. models/base/MapSAM/<feature>/                (feature-specific base DoRA weights)
+    3. none found → train from fresh DoRA adapters on the frozen SAM backbone.
+       This is the normal path for a brand-new feature with no prior weights.
+       (The plain SAM checkpoint origional_weights/sam_vit_b_01ec64.pth is NOT a
+       DoRA fallback — it is loaded separately as the backbone; using it as DoRA
+       weights KeyErrors because it has no adapter keys.)
 
 Data (from step 02_annotate/export_masks.py)
     data/annotations/<feature>/<sheet>/images/*.png  — RGB patch copies
@@ -59,6 +63,20 @@ from sam_dora_image_encoder import DoRA_Sam      # noqa: E402
 from segment_anything import sam_model_registry  # noqa: E402
 
 
+def _tensor_from_numpy(arr: np.ndarray) -> torch.Tensor:
+    """torch.from_numpy replacement compatible with NumPy 2.x.
+
+    torch.from_numpy checks the C-level numpy.ndarray type, which changed in
+    NumPy 2.0, so it fails with "expected np.ndarray (got numpy.ndarray)" when
+    PyTorch was compiled against NumPy 1.x. Routing through memoryview /
+    torch.frombuffer bypasses that type check regardless of NumPy version.
+    """
+    arr = np.ascontiguousarray(arr)
+    return (torch.frombuffer(memoryview(arr), dtype=torch.float32)
+                 .reshape(arr.shape)
+                 .clone())
+
+
 # ---------------------------------------------------------------------------
 # Augmentation
 # ---------------------------------------------------------------------------
@@ -96,9 +114,9 @@ class _Augment:
         low_res_m = zoom(mask, (self.low_res / lh, self.low_res / lw), order=0)
 
         return (
-            torch.from_numpy(image.astype(np.float32)),
-            torch.from_numpy(mask.astype(np.float32)).long(),
-            torch.from_numpy(low_res_m.astype(np.float32)).long(),
+            _tensor_from_numpy(image.astype(np.float32)),
+            _tensor_from_numpy(mask.astype(np.float32)).long(),
+            _tensor_from_numpy(low_res_m.astype(np.float32)).long(),
         )
 
 
@@ -208,13 +226,20 @@ def _validate(model, loader, multimask_output, img_size, threshold=0.5):
 # ---------------------------------------------------------------------------
 
 def _resolve_weights(args_weights, feature: str, finetuned_dir: Path,
-                     mapsam_base_dir: Path) -> str:
+                     mapsam_base_dir: Path) -> str | None:
     """
-    Search order:
+    Find DoRA weights to resume from. Search order:
       1. --weights CLI argument (explicit override)
       2. Most recent mapsam_<feature>*_best.pth in models/finetuned/
       3. Most recent *.pth in models/base/MapSAM/<feature>/   (feature-specific base)
-      4. Most recent *.pth in models/base/MapSAM/origional_weights/  (generic fallback)
+
+    Returns None when nothing is found — a brand-new feature (e.g. 'orchard')
+    has no DoRA weights yet, which is a valid state: main() then trains from the
+    freshly-initialised DoRA adapters that DoRA_Sam() already builds on top of
+    the frozen SAM backbone. The plain SAM checkpoint in origional_weights/
+    (sam_vit_b_01ec64.pth) is deliberately NOT a fallback here — it has no DoRA
+    keys, so load_dora_parameters() would KeyError on 'image_encoder.blocks.
+    0.attn.qkv.m_q'. It is loaded separately as the backbone via sam_model_registry.
     """
     if args_weights:
         p = Path(args_weights)
@@ -232,27 +257,15 @@ def _resolve_weights(args_weights, feature: str, finetuned_dir: Path,
     if candidates:
         return str(candidates[-1])
 
-    # 2. Feature-specific base weights
+    # 2. Feature-specific base weights (e.g. the Siegfried DoRA pretrains)
     feature_base = mapsam_base_dir / feature
     if feature_base.exists():
         candidates = sorted(feature_base.rglob("*.pth"), key=lambda p: p.stat().st_mtime)
         if candidates:
             return str(candidates[-1])
 
-    # 3. Generic fallback weights (pre-trained MapSAM DoRA, not feature-specific)
-    fallback_dir = mapsam_base_dir / "origional_weights"
-    if fallback_dir.exists():
-        candidates = sorted(fallback_dir.rglob("*.pth"), key=lambda p: p.stat().st_mtime)
-        if candidates:
-            return str(candidates[-1])
-
-    sys.exit(
-        f"No DoRA weights found for feature '{feature}'.\n"
-        f"  Searched (finetuned)  : {finetuned_dir}\n"
-        f"  Searched (feature)    : {feature_base}\n"
-        f"  Searched (fallback)   : {fallback_dir}\n"
-        "Pass --weights <path> to specify explicitly."
-    )
+    # 3. Nothing found — new feature. Train from fresh DoRA adapters.
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -305,7 +318,11 @@ def main():
     dora_weights = _resolve_weights(
         args.weights, args.feature, finetuned_dir, mapsam_base_dir
     )
-    print(f"Base weights : {Path(dora_weights).name}")
+    if dora_weights:
+        print(f"Base weights : {Path(dora_weights).name}")
+    else:
+        print(f"Base weights : none found for '{args.feature}' — "
+              "training from fresh DoRA adapters (frozen SAM backbone)")
 
     run_name = args.name or datetime.now().strftime(f"mapsam_{args.feature}_%Y%m%d_%H%M")
     if not run_name.startswith("mapsam"):
@@ -332,7 +349,8 @@ def main():
         pixel_std   = [1, 1, 1],
     )
     net = DoRA_Sam(sam, mcfg["rank"]).cuda()
-    net.load_dora_parameters(dora_weights)
+    if dora_weights:
+        net.load_dora_parameters(dora_weights)
 
     multimask_output = mcfg["num_classes"] > 1
     low_res          = img_embed_size * 4   # 128 for ViT-B
