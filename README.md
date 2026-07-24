@@ -4,7 +4,7 @@ This is a toolkit for comprehensive semi-automated vectorisation of cadastral ma
 The pipeline was initially developed for use with the [Tithe Maps of England and Wales]() to target, with each model,:
 - Solid boundary lines between land parcels with a modified version of [this improved U-Net architecture]() and model weights that have only been trained on tithe map training data (~300 map patches across 12(?) sample maps). Symbology such as building outlines and watercourses that are not land parcel boundaries, yet are morphologically identical, were also annotated to avoid bad prediction from the model's lack of additional semantic knowledge.
 - Water (watercourses and waterbodies), land cover symbology (all different symbology together in one class to account for inter-map sheet variability requiring post-prediction manual classification aka filling in an attribute field), and house footprints with [MapSAM](https://arxiv.org/abs/2411.06971). Derived from SAM and fine-tuned for the historic map domain, minimal few-shot fine-tuning is required to produce high-accuracy prediction for each class. 
-- Text with the use of  
+- Text with the use of the [MapTextPipeline runner](https://github.com/maps-as-data/MapTextPipeline) with model weights built from David Rumsey historical map collection ([add link to these]()). 
 
 
 
