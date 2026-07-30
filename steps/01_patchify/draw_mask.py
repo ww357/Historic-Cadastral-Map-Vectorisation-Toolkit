@@ -357,7 +357,11 @@ def draw_mask(sheet_id: str, preview_size: int):
 
     print(f"\nSaved → {out_path}")
     print(f"  Map-area coverage: {coverage * 100:.1f}% of image")
-    print("\nRun patchify.py --sheet {} --mask  to use this mask.".format(sheet_id))
+    print(
+        f"\nNext step: slice the sheet into patches using this mask\n"
+        f"  conda activate maptools\n"
+        f"  python steps/01_patchify/patchify.py --sheet {sheet_id} --mask"
+    )
 
 
 if __name__ == "__main__":

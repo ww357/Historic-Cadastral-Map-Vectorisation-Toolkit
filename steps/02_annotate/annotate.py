@@ -100,7 +100,11 @@ def annotate(sheet_id: str):
 
     completed = list(json_dir.glob("*.json"))
     print(f"\nSession ended. {len(completed)} patch(es) annotated.")
-    print(f"Run export_masks.py --sheet {sheet_id} to generate binary masks.")
+    print(
+        f"\nNext step: export the labelme JSON to binary masks\n"
+        f"  conda activate maptools\n"
+        f"  python steps/02_annotate/export_masks.py --sheet {sheet_id}"
+    )
 
 
 if __name__ == "__main__":

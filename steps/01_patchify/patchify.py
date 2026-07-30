@@ -178,6 +178,11 @@ def patchify(sheet_id: str, require_mask: bool, repo_root: Path):
     print(f"\nSaved {saved} patches  ({len(grid) - saved} skipped)")
     print(f"  -> {out_imgs}/")
     print(f"  -> {out_meta}/{sheet_id}_patches.csv")
+    print(
+        f"\nNext step: annotate a sample of patches in labelme\n"
+        f"  conda activate maptools\n"
+        f"  python steps/02_annotate/annotate.py --sheet {sheet_id}"
+    )
 
 
 if __name__ == "__main__":

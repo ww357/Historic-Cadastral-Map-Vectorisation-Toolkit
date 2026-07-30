@@ -154,6 +154,20 @@ def export_masks(sheet_id: str, line_width_override: int | None,
         print(f"  {label:<16} {n} patch(es)")
     print(f"\nAnnotations written to {ann_dir}/")
 
+    # Each label routes to a different trainer, so spell out one line per class.
+    print("\nNext step: fine-tune a model for each annotated class")
+    for label in sorted(counts):
+        if label == boundary_label:
+            print(f"  {label:<16} conda activate lines    && "
+                  f"python steps/03_finetune/lines/train.py --sheet {sheet_id}")
+        elif label == "dashed":
+            print(f"  {label:<16} conda activate lines    && "
+                  f"python steps/03_finetune/dashed/train.py   (pooled over all sheets)")
+        else:
+            print(f"  {label:<16} conda activate polygons && "
+                  f"python steps/03_finetune/polygons/train.py --sheet {sheet_id} "
+                  f"--feature {label}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
