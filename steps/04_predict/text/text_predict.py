@@ -394,7 +394,7 @@ def predict(sheet_id: str, repo_root: Path,
     except ImportError:
         sys.exit(
             "mapreader package not found.\n"
-            "Activate the correct environment:  conda activate New-MapReader\n"
+            "Activate the correct environment:  conda activate polygons\n"
             "Then install:  pip install mapreader"
         )
 

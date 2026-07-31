@@ -419,8 +419,12 @@ def main() -> None:
     ap.add_argument("--sheet", required=True, help="Sheet ID")
     ap.add_argument("--boundary", default=None,
                     help="Override boundary raster path (default: data/stitched/boundaries/<sheet>.tif)")
-    ap.add_argument("--no-mended", action="store_true",
-                    help="Ignore hand-corrected boundary GeoPackages in the mended folder")
+    ap.add_argument("--mended", action="store_true",
+                    help="Use the hand-corrected line layers from the GeoPackage in "
+                         "paths.outputs_mended instead of the model rasters. Warns if a "
+                         "mended file exists and this flag is omitted.")
+    # Deprecated: this step used to read the mended file automatically.
+    ap.add_argument("--no-mended", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--extent", nargs="+", default=None, metavar="FEATURE",
                     help="Features whose footprint acts as a wall the flood will not cross "
                          "(kept inside parcels). e.g. --extent boundaries dashed building. "
@@ -444,8 +448,15 @@ def main() -> None:
     use_mask    = bool(pcfg.get("use_map_mask", True))
     min_px      = int(pcfg.get("min_region_px", 64))
     points_file = pcfg.get("points_file", "Holnicote Apportionment Points.gpkg")
-    mended_dir  = ROOT / pcfg.get("mended_dir", "data/mended outputs")
+    # paths.outputs_mended is the shared location every step uses; parcels.mended_dir
+    # is kept only as a fallback for configs written before it was unified.
+    mended_dir  = ROOT / (paths.get("outputs_mended")
+                          or pcfg.get("mended_dir", "data/mended outputs"))
     mend_width  = int(pcfg.get("mended_line_width_px", 3))
+
+    if args.no_mended:
+        print("Note: --no-mended is deprecated and now has no effect — the model rasters "
+              "are the default. Pass --mended to use hand-corrected line layers.")
 
     # Extent / exclusion feature sets (CLI overrides config).
     extent_features  = [_canon_feature(f) for f in
@@ -480,11 +491,26 @@ def main() -> None:
     print(f"Extent    : {', '.join(extent_features) or '(none!)'}"
           + (f"   |  Exclude: {', '.join(exclude_features)}" if exclude_features else ""))
 
-    # Prefer a hand-corrected GeoPackage for the linear layers (boundaries/dashed)
-    # if one exists — its mended line layers are rasterised in load_feature_binary.
-    mended_path = None if args.no_mended else resolve_mended(mended_dir, sheet)
+    # --mended swaps the linear layers (boundaries/dashed) for the hand-corrected
+    # line layers, rasterised in load_feature_binary. Opt-in, like every other step:
+    # results should not silently change because a file appeared in a folder.
+    mended_path = resolve_mended(mended_dir, sheet) if args.mended else None
+    if args.mended and mended_path is None:
+        sys.exit(
+            f"--mended: no GeoPackage for sheet '{sheet}' in {mended_dir}\n"
+            f"Looked for '{sheet}.gpkg' and any *.gpkg with '{sheet}' in the name."
+        )
     if mended_path is not None:
         print(f"Mended    : {mended_path.relative_to(ROOT)}  (line layers used where present)")
+    else:
+        available = resolve_mended(mended_dir, sheet)
+        if available is not None:
+            print(
+                f"\n  ! A mended GeoPackage exists for this sheet:\n"
+                f"      {available}\n"
+                f"    but --mended was not passed, so the model rasters are used instead.\n"
+                f"    Re-run with --mended to partition using the corrected lines.\n"
+            )
 
     # Reference grid (transform / size / CRS) — from the stitched boundary raster
     # if it exists, else the raw GeoTIFF.  Both share the same grid.

@@ -15,7 +15,7 @@ Weight search order:
   4. Most recently modified *.weights.h5 in models/base/ (recursive)
 
 Usage:
-    conda activate tf-gpu
+    conda activate lines
     python steps/04_predict/lines/predict.py --sheet SHEET_ID
 """
 
@@ -196,6 +196,11 @@ def predict(sheet_id: str, repo_root: Path, weights_arg: str | None = None):
     saved = len(to_predict) - failed
     print(f"\nDone  ({saved} predicted, {len(annotated)} annotation-only, {failed} failed)")
     print(f"  -> {out_dir}/")
+    print(
+        f"\nNext step: stitch and vectorise to GeoPackage\n"
+        f"  conda activate maptools\n"
+        f"  python steps/05_vectorise/lines/vectorise.py --sheet {sheet_id}"
+    )
     tf.keras.backend.clear_session()
 
 

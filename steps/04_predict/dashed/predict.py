@@ -10,7 +10,11 @@ patch is a single forward pass.
 
 Weight search order:
   1. --weights CLI argument (explicit path)
-  2. Most recently modified *.weights.h5 in models/base/dashed/
+  2. Most recently modified *.h5 in models/base/dashed/
+
+Both Keras 3 (*.weights.h5) and Keras 2 (*.h5) weight files are accepted.
+Keras 3 picks its loader from the *filename*, not the file contents, so a
+Keras 2 file must not be named *.weights.h5 — see load_weights_compat().
 
 (No working/iterative two-track split yet, unlike the boundary lines
 pipeline — the "dashed" model is currently a single pooled cross-sheet model
@@ -61,15 +65,44 @@ def resolve_weights(weights_arg: str | None, repo_root: Path, paths_cfg: dict) -
         sys.exit(f"Weights not found: {p}")
 
     base_dir = repo_root / paths_cfg["models_base"] / "dashed"
-    candidates = sorted(base_dir.glob("*.weights.h5"), key=lambda p: p.stat().st_mtime)
+    candidates = sorted(base_dir.glob("*.h5"), key=lambda p: p.stat().st_mtime)
     if candidates:
         return candidates[-1]
 
     sys.exit(
-        f"No weights found in {base_dir} (*.weights.h5).\n"
+        f"No weights found in {base_dir} (*.h5).\n"
         "Pass --weights <path> to specify a file explicitly, or run "
         "steps/03_finetune/dashed/train.py first."
     )
+
+
+def load_weights_compat(model, weights_path: Path) -> None:
+    """Load weights saved by either Keras 3 or Keras 2 into `model`.
+
+    Keras 3 chooses its loader from the filename, not the file contents: a name
+    ending in .weights.h5 routes to the Keras 3 reader, anything else ending in
+    .h5 routes to the legacy Keras 2 reader. A Keras 2 file named .weights.h5
+    therefore matches nothing and fails with "expected N variables, but
+    received 0" for every layer. Legacy files carry a root 'layer_names'
+    attribute, so check that against the name and say what to rename.
+    """
+    import h5py
+
+    with h5py.File(weights_path, "r") as f:
+        is_legacy = "layer_names" in f.attrs or "model_weights" in f
+
+    if is_legacy and weights_path.name.endswith(".weights.h5"):
+        correct = weights_path.with_name(
+            weights_path.name[: -len(".weights.h5")] + ".h5"
+        )
+        sys.exit(
+            f"{weights_path.name} holds Keras 2 weights but is named '.weights.h5',\n"
+            f"which makes Keras 3 use the wrong loader and read zero variables.\n"
+            f"Rename it so Keras 3 picks the legacy loader:\n"
+            f"  mv '{weights_path}' '{correct}'"
+        )
+
+    model.load_weights(str(weights_path))
 
 
 def predict(sheet_id: str, weights_arg: str | None = None):
@@ -107,7 +140,7 @@ def predict(sheet_id: str, weights_arg: str | None = None):
     tf.keras.mixed_precision.set_global_policy("mixed_float16")
 
     model, _ = build_unet(img_size=img_size)
-    model.load_weights(str(weights_path))
+    load_weights_compat(model, weights_path)
     print("Model loaded.\n")
 
     patch_paths = sorted(patches_dir.glob("*.png"))
@@ -138,6 +171,11 @@ def predict(sheet_id: str, weights_arg: str | None = None):
     saved = len(to_predict) - failed
     print(f"\nDone  ({saved} predicted, {len(annotated)} annotation-only, {failed} failed)")
     print(f"  -> {out_dir}/")
+    print(
+        f"\nNext step: stitch and vectorise to GeoPackage\n"
+        f"  conda activate maptools\n"
+        f"  python steps/05_vectorise/dashed/vectorise.py --sheet {sheet_id}"
+    )
     tf.keras.backend.clear_session()
 
 

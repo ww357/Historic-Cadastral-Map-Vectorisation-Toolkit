@@ -293,3 +293,14 @@ if __name__ == "__main__":
 
         if len(features) > 1 and i < len(features) - 1:
             print()
+
+    # Next step differs per feature: MapSAM features go through the polygons
+    # vectoriser, text has its own maptools-side writer (see Known Quirks).
+    print("\nNext step: vectorise to GeoPackage")
+    if mapsam_features:
+        print(f"  conda activate maptools\n"
+              f"  python steps/05_vectorise/polygons/vectorise.py --sheet {args.sheet} "
+              f"--feature {' '.join(mapsam_features)}")
+    if "text" in features:
+        print(f"  conda activate maptools\n"
+              f"  python steps/05_vectorise/text/text_to_vector.py --sheet {args.sheet}")
