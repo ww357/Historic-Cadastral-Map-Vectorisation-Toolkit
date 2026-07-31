@@ -154,6 +154,11 @@ def main():
     print(f"\nDone. {total} patch(es) written across {len(sheets)} sheet(s).")
     print(f"  -> {ROOT / cfg['paths']['annotations'] / LABEL}/<sheet>/masks/")
     print(f"  -> {ROOT / cfg['paths']['annotations'] / LABEL}/<sheet>/gaussian/")
+    print(
+        "\nNext step: train the dashed-line model (pooled over every sheet above)\n"
+        "  conda activate lines\n"
+        "  python steps/03_finetune/dashed/train.py"
+    )
 
 
 if __name__ == "__main__":

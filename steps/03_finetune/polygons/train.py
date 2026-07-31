@@ -456,6 +456,12 @@ def main():
     print(f"\nDone. Best val_IoU={best_iou:.4f}")
     print(f"  Weights: {best_path.relative_to(ROOT)}")
     print(f"  Log:     {log_path.relative_to(ROOT)}")
+    print(
+        f"\nNext step: predict this feature across the sheet\n"
+        f"  conda activate polygons\n"
+        f"  python steps/04_predict/polygons/predict.py --sheet {args.sheet} "
+        f"--feature {args.feature}"
+    )
 
 
 if __name__ == "__main__":

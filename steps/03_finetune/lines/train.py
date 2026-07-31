@@ -14,7 +14,7 @@ not from these.
 
 Usage
 -----
-    conda activate tf-gpu
+    conda activate lines
     python steps/03_finetune/lines/train.py --sheet SHEET_ID
 
 Data expected

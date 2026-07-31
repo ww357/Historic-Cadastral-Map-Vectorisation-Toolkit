@@ -7,7 +7,7 @@ promoting weights or continuing training.
 
 Usage
 -----
-    conda activate tf-gpu
+    conda activate lines
     python steps/03_finetune/lines/evaluate.py
     python steps/03_finetune/lines/evaluate.py --weights-dir models/finetuned/working/
     python steps/03_finetune/lines/evaluate.py --data-dir data/annotations/
