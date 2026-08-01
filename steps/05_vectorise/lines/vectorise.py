@@ -11,6 +11,13 @@ Writes : data/stitched/boundaries/<SHEET_ID>.tif               — full-sheet ui
                                                                — layer "boundary_raster" (raster)
                                                                — layer "Patch_Grid" (once per sheet)
 
+Output target:
+  default   data/outputs/<SHEET_ID>.gpkg
+  --mended  the hand-corrected GeoPackage in paths.outputs_mended, so this layer
+            lands alongside layers already mended in QGIS. Only this script's own
+            layers are replaced; the rest are preserved. Errors if none exists.
+  --gpkg    an explicit path, overriding both.
+
 Pipeline:
   1. Reassemble 512px prediction patches onto a full-sheet canvas
      (annotated patches use their annotation mask directly — skips model for those areas)
@@ -56,6 +63,59 @@ def load_config() -> dict:
     if not p.exists():
         sys.exit(f"config.yaml not found at {p}")
     return yaml.safe_load(p.read_text())
+
+
+def _rel(p: Path) -> str:
+    """Path relative to ROOT for printing, falling back to absolute for --gpkg
+    targets outside the repo."""
+    try:
+        return str(p.relative_to(ROOT))
+    except ValueError:
+        return str(p)
+
+
+def resolve_output_gpkg(sheet_id: str, cfg: dict, gpkg_arg: str | None,
+                        mended: bool) -> Path:
+    """
+    Pick the GeoPackage to write to.
+
+    Default is paths.outputs; --mended switches to paths.outputs_mended; --gpkg
+    overrides both. The target is deliberately never inferred from what happens
+    to exist on disk: this script drops and rewrites its own layers, so silently
+    redirecting into a hand-corrected file would destroy mending.
+    """
+    if gpkg_arg:
+        p = Path(gpkg_arg)
+        return p if p.is_absolute() else ROOT / p
+
+    if not mended:
+        return ROOT / cfg["paths"]["outputs"] / f"{sheet_id}.gpkg"
+
+    mended_dir = ROOT / cfg["paths"].get("outputs_mended", "data/mended outputs")
+    # Mended files are named for the sheet but not always exactly
+    # (e.g. "Porlock mended.gpkg") — same resolution as parcel_segment.py.
+    if mended_dir.exists():
+        exact = mended_dir / f"{sheet_id}.gpkg"
+        if exact.exists():
+            return exact
+        matches = sorted(p for p in mended_dir.glob("*.gpkg")
+                         if sheet_id.lower() in p.stem.lower())
+        if matches:
+            return matches[0]
+
+    sys.exit(
+        f"--mended: no GeoPackage for sheet '{sheet_id}' in {mended_dir}\n"
+        f"Looked for '{sheet_id}.gpkg' and any *.gpkg with '{sheet_id}' in the name.\n"
+        f"Put the mended file there, or drop --mended to write to "
+        f"{cfg['paths']['outputs']}{sheet_id}.gpkg."
+    )
+
+
+def announce_target(out_path: Path, layers: list[str]):
+    print(f"Output GPKG  : {_rel(out_path)}")
+    existing = [n for n in layers if _layer_exists(out_path, n)]
+    if existing:
+        print(f"  Replacing existing layer(s): {', '.join(existing)}")
 
 
 # ---------------------------------------------------------------------------
@@ -298,7 +358,8 @@ def extract_polylines(skeleton: np.ndarray, transform, has_georef: bool,
     return lines
 
 
-def vectorise(sheet_id: str, cfg: dict, stitched_path: Path, georef: dict):
+def vectorise(sheet_id: str, cfg: dict, stitched_path: Path, georef: dict,
+              out_path: Path):
     vcfg         = cfg["vectorise"]["boundaries"]
     simplify_tol = float(vcfg["simplify_tolerance"])
     min_length   = float(vcfg["min_length"])
@@ -306,9 +367,7 @@ def vectorise(sheet_id: str, cfg: dict, stitched_path: Path, georef: dict):
     do_repair    = repair_cfg.get("enabled", False)
 
     meta_path = ROOT / cfg["paths"]["patches"] / "metadata" / f"{sheet_id}_patches.csv"
-    out_dir   = ROOT / cfg["paths"]["outputs"]
-    out_path  = out_dir / f"{sheet_id}.gpkg"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
 
     transform  = georef["transform"]
     crs        = georef["crs"]
@@ -322,6 +381,7 @@ def vectorise(sheet_id: str, cfg: dict, stitched_path: Path, georef: dict):
           f"|  boundary pixels: {(mask > 0).sum():,}")
     print(f"CRS          : {crs or 'none (pixel coords)'}")
     print(f"Simplify tol : {simplify_tol}  |  min length: {min_length}")
+    announce_target(out_path, ["boundaries", "boundary_raster", "Patch_Grid"])
 
     print("\nSkeletonizing...")
     binary   = mask > 0
@@ -356,7 +416,7 @@ def vectorise(sheet_id: str, cfg: dict, stitched_path: Path, georef: dict):
     _drop_vector_layer(out_path, "boundaries")
     write_mode = "a" if out_path.exists() else "w"
     gdf.to_file(out_path, driver="GPKG", layer="boundaries", mode=write_mode)
-    print(f"\nSaved → {out_path.relative_to(ROOT)}")
+    print(f"\nSaved → {_rel(out_path)}")
     print(f"  boundaries (vector):  {len(gdf):,} features  |  "
           f"total length: {gdf['length'].sum():,.1f} map units"
           + (f"  ({int(gdf['is_bridge'].sum())} bridges)" if do_repair else ""))
@@ -366,6 +426,15 @@ def vectorise(sheet_id: str, cfg: dict, stitched_path: Path, georef: dict):
     print("  boundary_raster (raster): done")
 
     _write_patch_grid(out_path, meta_path, transform, crs, has_georef, sheet_id, cfg)
+
+    print(
+        f"\nNext step: mend the 'boundaries' layer in QGIS, then feed the "
+        f"corrections back:\n"
+        f"  conda activate maptools\n"
+        f"  python steps/06_feedback/lines/rasterise.py --sheet {sheet_id}\n"
+        f"  conda activate lines\n"
+        f"  python steps/06_feedback/lines/train.py --sheet {sheet_id}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -377,11 +446,21 @@ def main():
         description="Stitch boundary predictions and vectorise to GeoPackage."
     )
     parser.add_argument("--sheet", required=True, help="Sheet ID")
+    target = parser.add_mutually_exclusive_group()
+    target.add_argument("--mended", action="store_true",
+                        help="Write into the hand-corrected GeoPackage in "
+                             "paths.outputs_mended instead of paths.outputs. Only this "
+                             "step's own layers are replaced; other mended layers are "
+                             "preserved. Errors if no mended file exists for the sheet.")
+    target.add_argument("--gpkg", default=None,
+                        help="Explicit output GeoPackage path (overrides --mended "
+                             "and the default).")
     args = parser.parse_args()
 
     cfg = load_config()
+    out_path = resolve_output_gpkg(args.sheet, cfg, args.gpkg, args.mended)
     stitched_path, georef = stitch(args.sheet, cfg)
-    vectorise(args.sheet, cfg, stitched_path, georef)
+    vectorise(args.sheet, cfg, stitched_path, georef, out_path)
 
 
 if __name__ == "__main__":
