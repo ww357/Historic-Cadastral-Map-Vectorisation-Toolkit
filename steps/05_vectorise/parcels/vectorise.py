@@ -163,17 +163,79 @@ def _resolve_in_dir(folder: Path, sheet_id: str, default_name: str) -> Path:
     return folder / default_name
 
 
+def _rel(p: Path) -> str:
+    """Path relative to ROOT for printing, falling back to absolute for --gpkg
+    targets outside the repo."""
+    try:
+        return str(p.relative_to(ROOT))
+    except ValueError:
+        return str(p)
+
+
+def resolve_output_gpkg(sheet_id: str, cfg: dict, gpkg_arg: str | None,
+                        mended: bool) -> Path:
+    """
+    Pick the GeoPackage to write to.
+
+    Default is paths.outputs; --mended switches to paths.outputs_mended; --gpkg
+    overrides both. The target is deliberately never inferred from what happens
+    to exist on disk: this script drops and rewrites the "parcels" layer, so
+    silently redirecting into a hand-corrected file would destroy mending.
+    (Until 2026-07 this step defaulted to mended-if-exists with --no-mended to
+    opt out; it now matches the other vectorise steps, which are opt-in.)
+    """
+    if gpkg_arg:
+        p = Path(gpkg_arg)
+        return p if p.is_absolute() else ROOT / p
+
+    if not mended:
+        return ROOT / cfg["paths"]["outputs"] / f"{sheet_id}.gpkg"
+
+    mended_dir = ROOT / cfg["paths"].get("outputs_mended", "data/mended outputs")
+    # Mended files are named for the sheet but not always exactly
+    # (e.g. "Porlock mended.gpkg") — same resolution as parcel_segment.py.
+    if mended_dir.exists():
+        exact = mended_dir / f"{sheet_id}.gpkg"
+        if exact.exists():
+            return exact
+        matches = sorted(p for p in mended_dir.glob("*.gpkg")
+                         if sheet_id.lower() in p.stem.lower())
+        if matches:
+            return matches[0]
+
+    sys.exit(
+        f"--mended: no GeoPackage for sheet '{sheet_id}' in {mended_dir}\n"
+        f"Looked for '{sheet_id}.gpkg' and any *.gpkg with '{sheet_id}' in the name.\n"
+        f"Put the mended file there, or drop --mended to write to "
+        f"{cfg['paths']['outputs']}{sheet_id}.gpkg."
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Join attributes and write parcels layer to GeoPackage."
     )
     parser.add_argument("--sheet", required=True,
                         help="Sheet ID (must match a completed parcel_segment.py run)")
-    parser.add_argument("--no-mended", action="store_true",
-                        help="Write to data/outputs/<sheet>.gpkg instead of the mended GeoPackage")
-    parser.add_argument("--output", default=None,
-                        help="Explicit output GeoPackage path (overrides default/mended resolution)")
+    target = parser.add_mutually_exclusive_group()
+    target.add_argument("--mended", action="store_true",
+                        help="Write into the hand-corrected GeoPackage in "
+                             "paths.outputs_mended instead of paths.outputs. Only the "
+                             "'parcels' layer is replaced; other mended layers are "
+                             "preserved. Errors if no mended file exists for the sheet.")
+    target.add_argument("--gpkg", default=None,
+                        help="Explicit output GeoPackage path (overrides --mended "
+                             "and the default).")
+    # Deprecated aliases from when this step defaulted to mended-if-exists.
+    target.add_argument("--output", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--no-mended", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+
+    if args.output:
+        print("Note: --output is deprecated — use --gpkg instead.")
+    if args.no_mended:
+        print("Note: --no-mended is deprecated and now has no effect: data/outputs is "
+              "the default. Pass --mended to write into the mended GeoPackage.")
     sheet_id = args.sheet
 
     cfg   = yaml.safe_load((ROOT / "config.yaml").read_text())
@@ -183,7 +245,6 @@ def main() -> None:
     min_area     = float(pcfg.get("min_area",           50.0))
     simplify_tol = float(pcfg.get("simplify_tolerance",  1.0))
     points_file  = pcfg.get("points_file", "Holnicote Apportionment Points.gpkg")
-    mended_dir   = ROOT / pcfg.get("mended_dir", "data/mended outputs")
 
     pred_geojson = (ROOT / paths["predictions"]
                     / "parcels" / sheet_id / "parcel_preds.geojson")
@@ -191,18 +252,10 @@ def main() -> None:
     # attribute join (e.g. "Porlock Points.gpkg"), else the configured default.
     points_path  = _resolve_in_dir(ROOT / paths["parcel_points"], sheet_id, points_file)
 
-    # Output target: write the `parcels` layer INTO the hand-corrected GeoPackage
-    # when one exists, so it sits alongside the mended boundary/text/Patch_Grid
-    # layers (ogr2ogr -update adds only this layer and preserves the others).
-    # Falls back to data/outputs/<sheet>.gpkg.
-    if args.output:
-        gpkg_path = Path(args.output)
-        if not gpkg_path.is_absolute():
-            gpkg_path = ROOT / gpkg_path
-    elif not args.no_mended and _resolve_in_dir(mended_dir, sheet_id, f"{sheet_id}.gpkg").exists():
-        gpkg_path = _resolve_in_dir(mended_dir, sheet_id, f"{sheet_id}.gpkg")
-    else:
-        gpkg_path = ROOT / paths["outputs"] / f"{sheet_id}.gpkg"
+    # --mended writes the `parcels` layer INTO the hand-corrected GeoPackage so it
+    # sits alongside the mended boundary/text/Patch_Grid layers (ogr2ogr -update
+    # adds only this layer and preserves the others).
+    gpkg_path = resolve_output_gpkg(sheet_id, cfg, args.gpkg or args.output, args.mended)
 
     if not pred_geojson.exists():
         sys.exit(
@@ -214,10 +267,9 @@ def main() -> None:
 
     gpkg_path.parent.mkdir(parents=True, exist_ok=True)
 
-    is_mended = mended_dir in gpkg_path.parents
     print(f"Points join : {points_path.name}")
-    print(f"Output GPKG : {gpkg_path.relative_to(ROOT)}"
-          f"{'   (MENDED — parcels layer added, other layers preserved)' if is_mended else ''}")
+    print(f"Output GPKG : {_rel(gpkg_path)}"
+          f"{'   (MENDED — parcels layer added, other layers preserved)' if args.mended else ''}")
 
     # ── Load predictions (json + shapely — no pyproj CRS lookup) ─────────────
     print(f"Reading {pred_geojson.name} ...")
@@ -406,6 +458,12 @@ def main() -> None:
         tmp.unlink(missing_ok=True)
 
     print(f"\nDone — {len(features_out):,} parcels in 'parcels' layer of {gpkg_path.name}")
+    print(
+        f"\nNext step: review the 'parcels' layer in QGIS.\n"
+        f"  Parcels are not a learned model — to change the result, re-run\n"
+        f"  steps/04_predict/parcels/parcel_segment.py with different --extent /\n"
+        f"  --exclude features or parcels: tuning in config.yaml, then re-run this step."
+    )
 
 
 if __name__ == "__main__":
