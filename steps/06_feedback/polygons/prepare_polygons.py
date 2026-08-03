@@ -60,6 +60,58 @@ except ImportError:
     sys.exit("rasterio required — conda activate polygons")
 
 
+# ── Input GeoPackage resolution ───────────────────────────────────────────────
+
+def find_mended(sheet_id: str, cfg: dict) -> Path | None:
+    """Hand-corrected GeoPackage for the sheet in paths.outputs_mended, or None.
+    Exact name first, then any *.gpkg containing the sheet ID (e.g. 'Porlock mended.gpkg')."""
+    d = ROOT / cfg["paths"].get("outputs_mended", "data/mended outputs")
+    if not d.is_dir():
+        return None
+    exact = d / f"{sheet_id}.gpkg"
+    if exact.exists():
+        return exact
+    hits = sorted(p for p in d.glob("*.gpkg") if sheet_id.lower() in p.stem.lower())
+    return hits[0] if hits else None
+
+
+def resolve_input_gpkg(sheet_id: str, cfg: dict, gpkg_arg: str | None,
+                       mended: bool) -> Path:
+    """
+    Pick the GeoPackage to READ the corrected layer from.
+
+    Same rule as every other step: default paths.outputs, --mended switches to
+    paths.outputs_mended, --gpkg overrides both.  If a mended file exists but was
+    not asked for, warn loudly — silently training on the un-mended file would
+    discard the corrections this whole step exists to capture.
+    """
+    if gpkg_arg:
+        p = Path(gpkg_arg)
+        return p if p.is_absolute() else ROOT / p
+
+    if mended:
+        found = find_mended(sheet_id, cfg)
+        if found is None:
+            d = ROOT / cfg["paths"].get("outputs_mended", "data/mended outputs")
+            sys.exit(
+                f"--mended: no GeoPackage for sheet '{sheet_id}' in {d}\n"
+                f"Looked for '{sheet_id}.gpkg' and any *.gpkg with '{sheet_id}' in the name."
+            )
+        return found
+
+    default = ROOT / cfg["paths"]["outputs"] / f"{sheet_id}.gpkg"
+    available = find_mended(sheet_id, cfg)
+    if available is not None:
+        print(
+            f"\n  ! A mended GeoPackage exists for this sheet:\n"
+            f"      {available}\n"
+            f"    but --mended was not passed, so corrections in it will be IGNORED\n"
+            f"    and training data will come from {default.name} instead.\n"
+            f"    Re-run with --mended to use the corrected layers.\n"
+        )
+    return default
+
+
 # ── GeoPackage helpers ────────────────────────────────────────────────────────
 
 def _gpkg_flags(blob: bytes) -> tuple[int, int]:
@@ -193,6 +245,13 @@ def main() -> None:
                         help="Skip polygons whose mask fills > this fraction of patch "
                              "(default 0.80)")
     parser.add_argument("--config",   default="config.yaml")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--mended", action="store_true",
+                        help="Read the corrected layer from the hand-corrected GeoPackage in "
+                             "paths.outputs_mended instead of paths.outputs. Warns if a mended "
+                             "file exists and this flag is omitted.")
+    source.add_argument("--gpkg", default=None,
+                        help="Explicit GeoPackage path to read (overrides --mended and the default).")
     args = parser.parse_args()
 
     cfg   = yaml.safe_load((ROOT / args.config).read_text())
@@ -207,7 +266,7 @@ def main() -> None:
                       feat_overrides.get("default", {})).get("min_area", 25.0)
     min_area = args.min_area if args.min_area is not None else feat_min_area
 
-    gpkg_path = ROOT / paths["outputs"]     / f"{args.sheet}.gpkg"
+    gpkg_path = resolve_input_gpkg(args.sheet, cfg, args.gpkg, args.mended)
     tif_path  = ROOT / paths["raw"]         / args.sheet / f"{args.sheet}.tif"
     out_dir   = (ROOT / paths["annotations"]
                  / args.feature / "feedback" / args.sheet)

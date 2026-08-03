@@ -31,7 +31,7 @@ Writes : models/finetuned/iterative/feedback_vN_best.weights.h5  (auto-increment
          models/logs/feedback_vN_metrics.csv
 
 Usage:
-    conda activate tf-gpu
+    conda activate lines
     python steps/06_feedback/lines/train.py --sheet SHEET_ID
     python steps/06_feedback/lines/train.py --sheet SHEET_ID --name my_run
 

@@ -67,6 +67,20 @@ from sam_dora_image_encoder import DoRA_Sam      # noqa: E402
 from segment_anything import sam_model_registry  # noqa: E402
 
 
+def _tensor_from_numpy(arr: np.ndarray) -> torch.Tensor:
+    """torch.from_numpy replacement compatible with NumPy 2.x.
+
+    torch.from_numpy checks the C-level numpy.ndarray type, which changed in
+    NumPy 2.0, so it fails with "expected np.ndarray (got numpy.ndarray)" when
+    PyTorch was compiled against NumPy 1.x. Routing through memoryview /
+    torch.frombuffer bypasses that type check regardless of NumPy version.
+    """
+    arr = np.ascontiguousarray(arr)
+    return (torch.frombuffer(memoryview(arr), dtype=torch.float32)
+                 .reshape(arr.shape)
+                 .clone())
+
+
 # ── Augmentation ──────────────────────────────────────────────────────────────
 
 class _Augment:
@@ -96,9 +110,9 @@ class _Augment:
         low_res_m = zoom(mask, (self.low_res / lh, self.low_res / lw), order=0)
 
         return (
-            torch.from_numpy(image.astype(np.float32)),
-            torch.from_numpy(mask.astype(np.float32)).long(),
-            torch.from_numpy(low_res_m.astype(np.float32)).long(),
+            _tensor_from_numpy(image.astype(np.float32)),
+            _tensor_from_numpy(mask.astype(np.float32)).long(),
+            _tensor_from_numpy(low_res_m.astype(np.float32)).long(),
         )
 
 
@@ -149,9 +163,9 @@ class PolygonDataset(Dataset):
                 mask = zoom(mask, (self.img_size / h, self.img_size / w), order=0)
             lh, lw    = mask.shape
             low_res_m = zoom(mask, (self.low_res / lh, self.low_res / lw), order=0)
-            image_t   = torch.from_numpy(img.astype(np.float32))
-            label_t   = torch.from_numpy(mask.astype(np.float32)).long()
-            low_res_t = torch.from_numpy(low_res_m.astype(np.float32)).long()
+            image_t   = _tensor_from_numpy(img.astype(np.float32))
+            label_t   = _tensor_from_numpy(mask.astype(np.float32)).long()
+            low_res_t = _tensor_from_numpy(low_res_m.astype(np.float32)).long()
 
         return {
             "image":         image_t,

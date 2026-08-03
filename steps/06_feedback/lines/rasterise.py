@@ -37,8 +37,8 @@ Usage:
     conda activate maptools
     python steps/06_feedback/lines/rasterise.py --sheet SHEET_ID
 
-Then run train.py in the tf-gpu environment:
-    conda activate tf-gpu
+Then run train.py in the lines environment:
+    conda activate lines
     python steps/06_feedback/lines/train.py --sheet SHEET_ID --name feedback_v1
 """
 
@@ -74,6 +74,56 @@ def load_config() -> dict:
     if not p.exists():
         sys.exit(f"config.yaml not found at {p}")
     return yaml.safe_load(p.read_text())
+
+
+def find_mended(sheet_id: str, cfg: dict) -> Path | None:
+    """Hand-corrected GeoPackage for the sheet in paths.outputs_mended, or None.
+    Exact name first, then any *.gpkg containing the sheet ID (e.g. 'Porlock mended.gpkg')."""
+    d = ROOT / cfg["paths"].get("outputs_mended", "data/mended outputs")
+    if not d.is_dir():
+        return None
+    exact = d / f"{sheet_id}.gpkg"
+    if exact.exists():
+        return exact
+    hits = sorted(p for p in d.glob("*.gpkg") if sheet_id.lower() in p.stem.lower())
+    return hits[0] if hits else None
+
+
+def resolve_input_gpkg(sheet_id: str, cfg: dict, gpkg_arg: str | None,
+                       mended: bool) -> Path:
+    """
+    Pick the GeoPackage to READ mended vectors from.
+
+    Same rule as every other step: default paths.outputs, --mended switches to
+    paths.outputs_mended, --gpkg overrides both.  If a mended file exists but was
+    not asked for, warn loudly — silently training on the un-mended file would
+    discard the corrections this whole step exists to capture.
+    """
+    if gpkg_arg:
+        p = Path(gpkg_arg)
+        return p if p.is_absolute() else ROOT / p
+
+    if mended:
+        found = find_mended(sheet_id, cfg)
+        if found is None:
+            d = ROOT / cfg["paths"].get("outputs_mended", "data/mended outputs")
+            sys.exit(
+                f"--mended: no GeoPackage for sheet '{sheet_id}' in {d}\n"
+                f"Looked for '{sheet_id}.gpkg' and any *.gpkg with '{sheet_id}' in the name."
+            )
+        return found
+
+    default = ROOT / cfg["paths"]["outputs"] / f"{sheet_id}.gpkg"
+    available = find_mended(sheet_id, cfg)
+    if available is not None:
+        print(
+            f"\n  ! A mended GeoPackage exists for this sheet:\n"
+            f"      {available}\n"
+            f"    but --mended was not passed, so corrections in it will be IGNORED\n"
+            f"    and training data will come from {default.name} instead.\n"
+            f"    Re-run with --mended to use the corrected layers.\n"
+        )
+    return default
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +351,13 @@ def main():
                         help="Sheet ID (must match folder names in data/)")
     parser.add_argument("--test-split", type=float, default=0.15,
                         help="Fraction of new tiles assigned to test split (default: 0.15)")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--mended", action="store_true",
+                        help="Read the mended vectors from the hand-corrected GeoPackage in "
+                             "paths.outputs_mended instead of paths.outputs. Warns if a mended "
+                             "file exists and this flag is omitted.")
+    source.add_argument("--gpkg", default=None,
+                        help="Explicit GeoPackage path to read (overrides --mended and the default).")
     args = parser.parse_args()
 
     sheet_id   = args.sheet
@@ -317,7 +374,7 @@ def main():
     boundary_label = ann_cfg.get("boundary_label", "boundary")
 
     dataset_dir  = ROOT / "data" / "training" / "boundary_dataset"
-    gpkg_path    = ROOT / paths["outputs"]     / f"{sheet_id}.gpkg"
+    gpkg_path    = resolve_input_gpkg(sheet_id, cfg, args.gpkg, args.mended)
     meta_path    = ROOT / paths["patches"]     / "metadata" / f"{sheet_id}_patches.csv"
     pred_dir     = ROOT / paths["predictions"] / "boundaries" / sheet_id
     img_dir      = ROOT / paths["patches"]     / "images"    / sheet_id
@@ -375,6 +432,7 @@ def main():
 
     print(f"\n── Rasterise feedback ─────────────────────────────────────")
     print(f"Sheet      : {sheet_id}  |  Georef: {has_georef}")
+    print(f"Source     : {gpkg_path.name}" + ("   (MENDED)" if args.mended else ""))
     print(f"Feedback   : {len(eligible_fb)} eligible patches "
           f"(predicted, not hand-annotated)")
     print(f"Annotation : {len(eligible_ann)} patches with hand-drawn masks")
@@ -467,7 +525,7 @@ def main():
     if eligible_records:
         print(f"Eligible  → {(feedback_dir / 'eligible.csv').relative_to(ROOT)}")
     print(f"\nNext step:")
-    print(f"  conda activate tf-gpu")
+    print(f"  conda activate lines")
     print(f"  python steps/06_feedback/lines/train.py "
           f"--sheet {sheet_id} --name feedback_v1")
 
