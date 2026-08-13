@@ -1,3 +1,15 @@
+__pycache__/
+*.py[cod]
+**/__init__.py
+
 data/
+
 prompts.txt
-models/
+
+models/base/
+models/finetuned/
+models/logs/
+models/MapSAM
+models/MapTextPipeline
+models/__pycache__/
+
