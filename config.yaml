@@ -6,6 +6,7 @@ paths:
   predictions: data/predictions/
   stitched: data/stitched/
   outputs: data/outputs/
+  outputs_mended: data/mended outputs/   # hand-corrected GeoPackages; written to only with --mended
   models_base: models/base/
   models_finetuned: models/finetuned/
   logs: models/logs/
@@ -100,7 +101,7 @@ mapsam:
   # --feature CLI argument, and weights are resolved automatically in this order:
   #   1. models/finetuned/  (mapsam_<feature>*_best.pth)
   #   2. models/base/MapSAM/<feature>/  (feature-specific base weights)
-  #   3. models/base/MapSAM/origional_weights/  (generic SAM DoRA fallback)
+  #   3. models/base/MapSAM/original_weights/  (generic SAM DoRA fallback)
   # Annotation data is read from data/annotations/<feature>/<sheet>/
   finetune:
     epochs: 30
@@ -121,7 +122,7 @@ finetune:
 
 feedback:
   # Feedback fine-tuning (step 07) — runs AFTER mending in QGIS
-  # Run rasterise.py (maptools) then train.py (tf-gpu)
+  # Run lines/prepare.py (maptools) then train.py (lines)
   replay_ratio: 0.4           # fraction of each batch drawn from ground-truth replay pool
                                # 0.4 = 40% GT tiles, 60% feedback tiles per batch
   feedback_loss_weight: 0.8   # loss weight for pseudo-label tiles (ground-truth = 1.0)
@@ -145,7 +146,7 @@ annotation:
 
 parcels:
   # ── Point-seeded watershed parcel extraction (ACTIVE method) ────────────────
-  # steps/04_predict/parcels/parcel_segment.py  +  steps/05_vectorise/parcels/parcel_vectorise.py
+  # steps/04_predict/parcels/predict.py  +  steps/05_vectorise/parcels/vectorise.py
   #
   # No model training.  Consumes the full-sheet boundary raster already produced
   # by the lines pipeline (data/stitched/boundaries/<sheet>.tif) and the
@@ -170,13 +171,43 @@ parcels:
   use_map_mask: true           # constrain the watershed to data/map_area_masks/<sheet> if present
   min_region_px: 64            # drop watershed regions smaller than this many px before vectorising
 
-  # Hand-corrected boundaries: if a GeoPackage for the sheet exists in this folder,
-  # its "boundaries" line layer is rasterised and used INSTEAD of the model raster.
-  # (Override per-run with --no-mended.)
+  # ── Which features define parcel extent ─────────────────────────────────────
+  # extent_features: features whose footprint acts as a WALL the flood will not
+  #   cross (they stay inside parcels — a building keeps its enclosing parcel).
+  #   exclude_features: features CARVED OUT of every parcel (become holes — use for
+  #   lakes/rivers that belong to no parcel).  Each name maps to a stitched raster
+  #   data/stitched/<name>/<sheet>.tif, except 'boundaries'/'dashed' which prefer a
+  #   mended GeoPackage line layer when one exists.  'lines' is an alias for
+  #   'boundaries'.  Override per-run with --extent / --exclude.
+  extent_features: [boundaries]     # e.g. [boundaries, dashed, building, water]
+  exclude_features: []              # e.g. [water]  (removed from all parcels)
+  dashed_barrier_weight: 0.6        # ridge height for dashed lines vs 1.0 for solid boundaries.
+                                    #   Softer, because a dashed line is often a path, not a border.
+                                    #   Where two apportionment seeds sit either side of a dashed line
+                                    #   it still separates them; a dashed pathway corridor with NO seed
+                                    #   inside is absorbed into a neighbouring parcel, not split off.
+  feature_barrier_weight: 1.0       # ridge height for areal barrier features (building/water outlines)
+
+  # ── Recorded-size guidance (fuzzy cap against runaway parcels) ───────────────
+  # Where a real border is missing the flood runs until it meets another parcel,
+  # producing an oversized parcel.  If the apportionment table records an area,
+  # cap each parcel's growth to roughly that area: keep the nearest-to-seed pixels
+  # up to size_factor × recorded area (so the boundary-defined core is respected)
+  # and release the overflow to unassigned background for the operator to mend.
+  # Only parcels that exceed the tolerance are touched.
+  use_recorded_size: true           # off if the points file has no usable area column
+  size_column: null                 # area column name; null = auto-detect common names
+  size_unit: acres                  # acres | ha | m2 | perches — unit of size_column values
+  size_factor: 1.8                  # allow up to this × recorded area before trimming (fuzzy)
+
+  # Superseded by paths.outputs_mended, which every step now uses for both reading
+  # and writing hand-corrected GeoPackages (always opt-in via --mended). Kept only
+  # as a fallback for configs written before the two were unified; delete once
+  # paths.outputs_mended is set.
   mended_dir: data/mended outputs   # folder of QGIS-corrected boundary GeoPackages
   mended_line_width_px: 3           # px width to rasterise mended boundary lines at
 
-  # Shared with parcel_vectorise.py (attribute join + GeoPackage write):
+  # Shared with parcels/vectorise.py (attribute join + GeoPackage write):
   min_area: 50.0               # m² — discard parcels smaller than this
   simplify_tolerance: 1.0      # Douglas-Peucker tolerance in CRS units (metres for BNG)
 
