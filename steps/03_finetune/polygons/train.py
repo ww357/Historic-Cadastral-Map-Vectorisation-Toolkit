@@ -19,7 +19,7 @@ Weight search order (when --weights is not given):
     2. models/base/MapSAM/<feature>/                (feature-specific base DoRA weights)
     3. none found → train from fresh DoRA adapters on the frozen SAM backbone.
        This is the normal path for a brand-new feature with no prior weights.
-       (The plain SAM checkpoint origional_weights/sam_vit_b_01ec64.pth is NOT a
+       (The plain SAM checkpoint original_weights/sam_vit_b_01ec64.pth is NOT a
        DoRA fallback — it is loaded separately as the backbone; using it as DoRA
        weights KeyErrors because it has no adapter keys.)
 
@@ -236,7 +236,7 @@ def _resolve_weights(args_weights, feature: str, finetuned_dir: Path,
     Returns None when nothing is found — a brand-new feature (e.g. 'orchard')
     has no DoRA weights yet, which is a valid state: main() then trains from the
     freshly-initialised DoRA adapters that DoRA_Sam() already builds on top of
-    the frozen SAM backbone. The plain SAM checkpoint in origional_weights/
+    the frozen SAM backbone. The plain SAM checkpoint in original_weights/
     (sam_vit_b_01ec64.pth) is deliberately NOT a fallback here — it has no DoRA
     keys, so load_dora_parameters() would KeyError on 'image_encoder.blocks.
     0.attn.qkv.m_q'. It is loaded separately as the backbone via sam_model_registry.
@@ -337,7 +337,7 @@ def main():
 
     # ---- Model ----------------------------------------------------------------
     sam_ckpt = (ROOT / paths["models_base"] / "MapSAM"
-                / "origional_weights" / "sam_vit_b_01ec64.pth")
+                / "original_weights" / "sam_vit_b_01ec64.pth")
     if not sam_ckpt.exists():
         sys.exit(f"SAM base checkpoint not found: {sam_ckpt}")
 

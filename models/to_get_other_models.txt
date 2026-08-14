@@ -1,0 +1,10 @@
+There are two folders already in Models:
+1) `DashedLineUNet/` with the model scripts for recognising dashed lines
+2) `ImprovedLinearUNet/` with the model scripts for recognising solid lines
+
+Two more models are needed for this toolkit:
+1) `MapSAM/` for polygon features (e.g. pond, river, building, forest, orchard) using `git clone https://github.com/ww357/MapSAM`
+2) `MapTextPipeline` for text recognition using `git clone https://github.com/maps-as-data/MapTextPipeline`
+
+
+

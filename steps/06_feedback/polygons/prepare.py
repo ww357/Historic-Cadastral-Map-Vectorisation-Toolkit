@@ -18,8 +18,8 @@ hand-drawn labelme annotations in data/annotations/<feature>/<sheet>/.
 
 Usage:
     conda activate polygons
-    python steps/06_feedback/polygons/prepare_polygons.py --sheet Timberscombe --feature water
-    python steps/06_feedback/polygons/prepare_polygons.py --sheet Timberscombe --feature building \\
+    python steps/06_feedback/polygons/prepare.py --sheet Timberscombe --feature water
+    python steps/06_feedback/polygons/prepare.py --sheet Timberscombe --feature building \\
         --min-area 10 --max-fill 0.8
 """
 

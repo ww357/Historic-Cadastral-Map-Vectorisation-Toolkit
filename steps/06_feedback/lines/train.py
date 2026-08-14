@@ -175,9 +175,9 @@ def build_training_arrays(
     if n_fb == 0:
         sys.exit(
             "No feedback tiles found for the current sheet.\n"
-            "Run rasterise.py first:\n"
+            "Run prepare.py first:\n"
             "  conda activate maptools\n"
-            "  python steps/06_feedback/lines/rasterise.py --sheet SHEET_ID"
+            "  python steps/06_feedback/lines/prepare.py --sheet SHEET_ID"
         )
 
     if gt_tiles and 0 < replay_ratio < 1:
@@ -400,9 +400,9 @@ def main():
     if not manifest_path.exists():
         sys.exit(
             f"manifest.csv not found at {manifest_path}\n"
-            "Run rasterise.py first:\n"
+            "Run prepare.py first:\n"
             "  conda activate maptools\n"
-            f"  python steps/06_feedback/lines/rasterise.py --sheet {sheet_id}"
+            f"  python steps/06_feedback/lines/prepare.py --sheet {sheet_id}"
         )
     manifest = pd.read_csv(manifest_path).to_dict("records")
     print(f"Manifest loaded: {len(manifest)} entries")
@@ -449,9 +449,9 @@ def main():
     if not fb_tiles:
         sys.exit(
             f"No feedback tiles found for sheet '{sheet_id}'.\n"
-            f"Run rasterise.py first:\n"
+            f"Run prepare.py first:\n"
             f"  conda activate maptools\n"
-            f"  python steps/06_feedback/lines/rasterise.py --sheet {sheet_id}"
+            f"  python steps/06_feedback/lines/prepare.py --sheet {sheet_id}"
         )
     if not val_tiles:
         print(

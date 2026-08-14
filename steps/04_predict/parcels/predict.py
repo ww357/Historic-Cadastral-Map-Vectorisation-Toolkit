@@ -50,12 +50,12 @@ Output (schema matches the old SAM step, so 05_vectorise/parcels works unchanged
 
 Usage:
     conda activate polygons        # (or lines) — needs scikit-image, scipy, rasterio
-    python steps/04_predict/parcels/parcel_segment.py --sheet Timberscombe
-    python steps/04_predict/parcels/parcel_segment.py --sheet Timberscombe \
+    python steps/04_predict/parcels/predict.py --sheet Timberscombe
+    python steps/04_predict/parcels/predict.py --sheet Timberscombe \
         --extent boundaries dashed building --exclude water
 
 Then:
-    python steps/05_vectorise/parcels/parcel_vectorise.py --sheet Timberscombe
+    python steps/05_vectorise/parcels/vectorise.py --sheet Timberscombe
 """
 
 from __future__ import annotations
@@ -723,7 +723,7 @@ def main() -> None:
     # ── Preview PNG (random colours per parcel over the boundary lines) ────────
     _write_preview(labels, boundary_vis, out_preview)
     print(f"Preview → {out_preview.relative_to(ROOT)}")
-    print(f"\nNext:  python steps/05_vectorise/parcels/parcel_vectorise.py --sheet {sheet}")
+    print(f"\nNext:  python steps/05_vectorise/parcels/vectorise.py --sheet {sheet}")
 
 
 def _write_preview(labels: np.ndarray, boundary: np.ndarray, out_path: Path,

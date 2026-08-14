@@ -1,10 +1,10 @@
 """
 Write the existing text_preds.geojson into the GeoPackage as a "text" layer.
 
-Run this in the maptools environment after text_predict.py has completed:
+Run this in the maptools environment after text/predict.py has completed:
     conda activate maptools
-    python steps/05_vectorise/text/text_to_vector.py --sheet SHEET_ID
-    python steps/05_vectorise/text/text_to_vector.py --sheet SHEET_ID --mended
+    python steps/05_vectorise/text/vectorise.py --sheet SHEET_ID
+    python steps/05_vectorise/text/vectorise.py --sheet SHEET_ID --mended
 
 Output target:
   default   data/outputs/<SHEET_ID>.gpkg
@@ -53,7 +53,7 @@ def resolve_output_gpkg(sheet_id: str, cfg: dict, gpkg_arg: str | None,
 
     mended_dir = ROOT / cfg["paths"].get("outputs_mended", "data/mended outputs")
     # Mended files are named for the sheet but not always exactly
-    # (e.g. "Porlock mended.gpkg") — same resolution as parcel_segment.py.
+    # (e.g. "Porlock mended.gpkg") — same resolution as parcels/predict.py.
     if mended_dir.exists():
         exact = mended_dir / f"{sheet_id}.gpkg"
         if exact.exists():

@@ -3,7 +3,7 @@ Feedback fine-tune MapSAM DoRA weights from QGIS-corrected polygon predictions.
 
 Differs from 03_finetune/polygons/train.py in three ways:
 
-  1. Data source: training pairs come from prepare_polygons.py output
+  1. Data source: training pairs come from prepare.py output
      (data/annotations/<feature>/feedback/<sheet>/) — i.e. rasterised QGIS-corrected
      polygons — rather than hand-drawn labelme annotations.
 
@@ -29,7 +29,7 @@ MapSAM prompt note:
 
 Workflow:
     conda activate polygons
-    python steps/06_feedback/polygons/prepare_polygons.py --sheet Timberscombe --feature water
+    python steps/06_feedback/polygons/prepare.py --sheet Timberscombe --feature water
     python steps/06_feedback/polygons/train.py --sheet Timberscombe --feature water
 
 Output:
@@ -265,7 +265,7 @@ def _resolve_weights(args_weights: str | None, feature: str,
         if candidates:
             return str(candidates[-1])
 
-    fallback_dir = mapsam_base_dir / "origional_weights"
+    fallback_dir = mapsam_base_dir / "original_weights"
     if fallback_dir.exists():
         candidates = sorted(fallback_dir.rglob("*.pth"), key=lambda p: p.stat().st_mtime)
         if candidates:
@@ -275,7 +275,7 @@ def _resolve_weights(args_weights: str | None, feature: str,
         f"No DoRA weights found for feature '{feature}'.\n"
         f"  Searched (finetuned)  : {finetuned_dir}\n"
         f"  Searched (feature)    : {feature_base}\n"
-        f"  Searched (fallback)   : {mapsam_base_dir / 'origional_weights'}\n"
+        f"  Searched (fallback)   : {mapsam_base_dir / 'original_weights'}\n"
         "Pass --weights <path> to specify explicitly."
     )
 
@@ -330,7 +330,7 @@ def main() -> None:
     if not fb_pairs:
         sys.exit(
             f"No feedback training data at {fb_ann_dir}\n"
-            f"Run prepare_polygons.py --sheet {args.sheet} "
+            f"Run prepare.py --sheet {args.sheet} "
             f"--feature {args.feature} first."
         )
 
@@ -393,7 +393,7 @@ def main() -> None:
     logs_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Model ─────────────────────────────────────────────────────────────────
-    sam_ckpt = mapsam_base_dir / "origional_weights" / "sam_vit_b_01ec64.pth"
+    sam_ckpt = mapsam_base_dir / "original_weights" / "sam_vit_b_01ec64.pth"
     if not sam_ckpt.exists():
         sys.exit(f"SAM base checkpoint not found: {sam_ckpt}")
 

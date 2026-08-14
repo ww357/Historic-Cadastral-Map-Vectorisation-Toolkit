@@ -1,7 +1,7 @@
 """
 Attribute-join and GeoPackage write for predicted parcel polygons.
 
-Reads parcel_preds.geojson (produced by parcel_segment.py — the point-seeded
+Reads parcel_preds.geojson (produced by parcels/predict.py — the point-seeded
 watershed step), joins all apportionment attribute columns from the original
 parcel_points GeoPackage (joined on rowid), applies a minimum-area filter and
 Douglas-Peucker simplification, then writes the result as a "parcels" layer in
@@ -10,10 +10,10 @@ the sheet GeoPackage.
 This step is schema-driven (it only needs Features with a `rowid` property), so
 it is agnostic to how the polygons were produced.
 
-Run after parcel_segment.py has completed:
+Run after parcels/predict.py has completed:
     conda activate polygons
-    python steps/04_predict/parcels/parcel_segment.py   --sheet Timberscombe
-    python steps/05_vectorise/parcels/parcel_vectorise.py --sheet Timberscombe
+    python steps/04_predict/parcels/predict.py --sheet Timberscombe
+    python steps/05_vectorise/parcels/vectorise.py    --sheet Timberscombe
 """
 
 from __future__ import annotations
@@ -193,7 +193,7 @@ def resolve_output_gpkg(sheet_id: str, cfg: dict, gpkg_arg: str | None,
 
     mended_dir = ROOT / cfg["paths"].get("outputs_mended", "data/mended outputs")
     # Mended files are named for the sheet but not always exactly
-    # (e.g. "Porlock mended.gpkg") — same resolution as parcel_segment.py.
+    # (e.g. "Porlock mended.gpkg") — same resolution as parcels/predict.py.
     if mended_dir.exists():
         exact = mended_dir / f"{sheet_id}.gpkg"
         if exact.exists():
@@ -216,7 +216,7 @@ def main() -> None:
         description="Join attributes and write parcels layer to GeoPackage."
     )
     parser.add_argument("--sheet", required=True,
-                        help="Sheet ID (must match a completed parcel_segment.py run)")
+                        help="Sheet ID (must match a completed parcels/predict.py run)")
     target = parser.add_mutually_exclusive_group()
     target.add_argument("--mended", action="store_true",
                         help="Write into the hand-corrected GeoPackage in "
@@ -248,7 +248,7 @@ def main() -> None:
 
     pred_geojson = (ROOT / paths["predictions"]
                     / "parcels" / sheet_id / "parcel_preds.geojson")
-    # Match parcel_segment.py: prefer the sheet-specific points file for the
+    # Match parcels/predict.py: prefer the sheet-specific points file for the
     # attribute join (e.g. "Porlock Points.gpkg"), else the configured default.
     points_path  = _resolve_in_dir(ROOT / paths["parcel_points"], sheet_id, points_file)
 
@@ -461,7 +461,7 @@ def main() -> None:
     print(
         f"\nNext step: review the 'parcels' layer in QGIS.\n"
         f"  Parcels are not a learned model — to change the result, re-run\n"
-        f"  steps/04_predict/parcels/parcel_segment.py with different --extent /\n"
+        f"  steps/04_predict/parcels/predict.py with different --extent /\n"
         f"  --exclude features or parcels: tuning in config.yaml, then re-run this step."
     )
 

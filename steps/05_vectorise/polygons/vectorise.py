@@ -106,7 +106,7 @@ def resolve_output_gpkg(sheet_id: str, cfg: dict, gpkg_arg: str | None,
 
     mended_dir = ROOT / cfg["paths"].get("outputs_mended", "data/mended outputs")
     # Mended files are named for the sheet but not always exactly
-    # (e.g. "Porlock mended.gpkg") — same resolution as parcel_segment.py.
+    # (e.g. "Porlock mended.gpkg") — same resolution as parcels/predict.py.
     if mended_dir.exists():
         exact = mended_dir / f"{sheet_id}.gpkg"
         if exact.exists():
@@ -424,7 +424,7 @@ def vectorise(sheet_id: str, feature: str, cfg: dict, stitched_path: Path,
         f"\nNext step: mend the '{feature}' layer in QGIS, then feed the "
         f"corrections back:\n"
         f"  conda activate polygons\n"
-        f"  python steps/06_feedback/polygons/prepare_polygons.py --sheet {sheet_id} "
+        f"  python steps/06_feedback/polygons/prepare.py --sheet {sheet_id} "
         f"--feature {feature}\n"
         f"  python steps/06_feedback/polygons/train.py --sheet {sheet_id} "
         f"--feature {feature}"

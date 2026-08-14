@@ -18,7 +18,7 @@ Writes : data/predictions/text/<SHEET_ID>/text_preds.geojson
          data/outputs/<SHEET_ID>.gpkg        (layer "text")
 
 Usage:
-    python steps/04_predict/text/text_predict.py --sheet SHEET_ID [--weights path/to/weights.pth] [--device cpu]
+    python steps/04_predict/text/predict.py --sheet SHEET_ID [--weights path/to/weights.pth] [--device cpu]
     python steps/04_predict/polygons/predict.py --sheet SHEET_ID --feature text [water building ...]
 """
 
@@ -327,14 +327,14 @@ def predict(sheet_id: str, repo_root: Path,
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
-    # Fast-exit: GeoJSON already saved — just need text_to_vector.py
+    # Fast-exit: GeoJSON already saved — just need the text vectorise step
     # ------------------------------------------------------------------
     if geojson_path.exists():
         print(f"GeoJSON already exists — inference and georeferencing are complete.")
         print(f"  {geojson_path.relative_to(repo_root)}")
         print(f"\nTo add the text layer to the GeoPackage:")
         print(f"  conda activate maptools")
-        print(f"  python steps/05_vectorise/text/text_to_vector.py --sheet {sheet_id}")
+        print(f"  python steps/05_vectorise/text/vectorise.py --sheet {sheet_id}")
         print(f"\nTo force a full re-run, delete these files first:")
         print(f"  rm {geojson_path}")
         print(f"  rm {checkpoint_path}")
@@ -494,8 +494,8 @@ def predict(sheet_id: str, repo_root: Path,
         print(f"  GeoJSON (pixel coords) → {geojson_path.relative_to(repo_root)}")
 
     # ------------------------------------------------------------------
-    # GeoPackage write is handled by text_to_vector.py in the maptools
-    # environment — New-MapReader's fiona cannot write GeoPackages reliably.
+    # GeoPackage write is handled by the text vectorise step in the maptools
+    # environment — the polygons env's fiona cannot write GeoPackages reliably.
     # ------------------------------------------------------------------
     if len(geo_gdf) == 0:
         print("\nWarning: no text predictions produced.")
@@ -504,7 +504,7 @@ def predict(sheet_id: str, repo_root: Path,
 
     print(f"\nTo add the text layer to the GeoPackage, run in a separate terminal:")
     print(f"  conda activate maptools")
-    print(f"  python steps/05_vectorise/text/text_to_vector.py --sheet {sheet_id}")
+    print(f"  python steps/05_vectorise/text/vectorise.py --sheet {sheet_id}")
     print(f"\nDone.")
 
 

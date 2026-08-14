@@ -339,7 +339,7 @@ def main():
     print(
         f"\nNext step: run prediction then mend in QGIS, then run step 06 feedback:\n"
         f"  python steps/04_predict/lines/predict.py --sheet {args.sheet}\n"
-        f"  python steps/06_feedback/lines/rasterise.py --sheet {args.sheet}\n"
+        f"  python steps/06_feedback/lines/prepare.py --sheet {args.sheet}\n"
         f"  python steps/06_feedback/lines/train.py --sheet {args.sheet}"
     )
 
