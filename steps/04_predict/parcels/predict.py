@@ -119,6 +119,18 @@ def load_config() -> dict:
     return yaml.safe_load(p.read_text())
 
 
+# Raw map formats, in resolution priority (matches patchify.py).
+RAW_EXTENSIONS = (".tif", ".tiff", ".vrt", ".jpg", ".jpeg", ".png")
+
+
+def find_raw(raw_root: Path, sheet_id: str) -> Path | None:
+    for ext in RAW_EXTENSIONS:
+        p = raw_root / sheet_id / f"{sheet_id}{ext}"
+        if p.exists():
+            return p
+    return None
+
+
 def resolve_points_file(pts_dir: Path, sheet: str, default_name: str) -> Path:
     """
     Prefer a GeoPackage in pts_dir whose filename contains the sheet name (e.g.
@@ -513,13 +525,12 @@ def main() -> None:
             )
 
     # Reference grid (transform / size / CRS) — from the stitched boundary raster
-    # if it exists, else the raw GeoTIFF.  Both share the same grid.
-    grid_src = stitched_path if stitched_path.exists() else \
-               (ROOT / paths["raw"] / sheet / f"{sheet}.tif")
-    if not grid_src.exists():
+    # if it exists, else the raw map (any supported format).  Both share the same grid.
+    grid_src = stitched_path if stitched_path.exists() else find_raw(ROOT / paths["raw"], sheet)
+    if grid_src is None or not grid_src.exists():
         sys.exit(
-            f"No boundary raster and no raw GeoTIFF to define the sheet grid:\n"
-            f"  stitched: {stitched_path}\n  raw     : {grid_src}\n"
+            f"No boundary raster and no raw map to define the sheet grid:\n"
+            f"  stitched: {stitched_path}\n  raw     : {ROOT / paths['raw'] / sheet}/\n"
             "Run the lines pipeline (predict.py + vectorise.py) first."
         )
     with rasterio.open(grid_src) as src:

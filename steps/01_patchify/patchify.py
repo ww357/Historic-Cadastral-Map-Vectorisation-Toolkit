@@ -1,5 +1,17 @@
 """
-Slice a georeferenced map sheet into 512px PNG patches.
+Slice a map sheet into 512px PNG patches.
+
+The raw map may be any of GeoTIFF (.tif/.tiff), GDAL VRT (.vrt), or JPG/PNG,
+georeferenced or not — data/raw/<SHEET_ID>/<SHEET_ID>.<ext>, tried in that
+priority order.  Georeferencing is read straight from the file: embedded for
+GeoTIFF/VRT, or from sidecar world file + projection (e.g. <SHEET>.jgw + .prj)
+which GDAL picks up automatically.  A plain JPG/PNG with no sidecars is treated
+as ungeoreferenced and processed in pixel coordinates (has_georef=False),
+exactly like a non-georef GeoTIFF.
+
+JPG/PNG cannot be windowed efficiently (no internal tiling), so those formats
+are read fully into memory once and sliced from the array; GeoTIFF/VRT keep
+memory-safe per-patch windowed reads.
 
 A map-area mask is applied automatically if one is found in
 data/map_area_masks/<SHEET_ID>/ (.png, .tif, or .tiff). Only patches that
@@ -76,6 +88,20 @@ def find_mask(mask_dir: Path, sheet_id: str) -> Path | None:
     return None
 
 
+# Raw map formats, in resolution priority: georeferenced/wrapped forms first,
+# plain images last. GDAL reads world-file + .prj sidecars for jpg/png/tif.
+RAW_EXTENSIONS = (".tif", ".tiff", ".vrt", ".jpg", ".jpeg", ".png")
+
+
+def find_raw(raw_root: Path, sheet_id: str) -> Path | None:
+    """Return data/raw/<sheet>/<sheet>.<ext> for the first supported extension."""
+    for ext in RAW_EXTENSIONS:
+        p = raw_root / sheet_id / f"{sheet_id}{ext}"
+        if p.exists():
+            return p
+    return None
+
+
 def to_pil(data: np.ndarray) -> Image.Image:
     """Convert rasterio (bands, H, W) uint8 array to PIL Image."""
     if data.shape[0] == 1:
@@ -93,13 +119,15 @@ def patchify(sheet_id: str, require_mask: bool, repo_root: Path):
         int(pc["pad_value"]),
     )
 
-    raw_path = repo_root / cfg["paths"]["raw"] / sheet_id / f"{sheet_id}.tif"
+    raw_root = repo_root / cfg["paths"]["raw"]
     mask_dir = repo_root / cfg["paths"]["masks"] / sheet_id
     out_imgs = repo_root / cfg["paths"]["patches"] / "images" / sheet_id
     out_meta = repo_root / cfg["paths"]["patches"] / "metadata"
 
-    if not raw_path.exists():
-        sys.exit(f"Raw map not found: {raw_path}")
+    raw_path = find_raw(raw_root, sheet_id)
+    if raw_path is None:
+        exts = "/".join(e.lstrip(".") for e in RAW_EXTENSIONS)
+        sys.exit(f"Raw map not found: {raw_root / sheet_id / sheet_id}.({exts})")
 
     mask_path = find_mask(mask_dir, sheet_id)
     if require_mask and mask_path is None:
@@ -119,8 +147,19 @@ def patchify(sheet_id: str, require_mask: bool, repo_root: Path):
         crs = src.crs.to_string() if has_georef else ""
         base_tf = src.transform
 
-        print(f"Sheet : {sheet_id}  |  {img_w}x{img_h}px  |  {src.count} band(s)")
-        print(f"CRS   : {crs or 'none'}")
+        # Scanned maps are RGB or grayscale; drop a 4th (alpha) band from RGBA PNGs
+        # so every saved patch is 1- or 3-band.
+        n_bands = min(src.count, 3) if src.count == 4 else src.count
+
+        # JPG/PNG have no internal tiling — windowed reads re-decode the whole file
+        # each time, so read once into memory and slice.  GeoTIFF/VRT stay windowed.
+        in_memory = src.driver in ("JPEG", "PNG")
+        full_img = src.read(indexes=list(range(1, n_bands + 1))) if in_memory else None
+
+        print(f"Sheet : {sheet_id}  |  {img_w}x{img_h}px  |  {src.count} band(s)"
+              + (f" -> {n_bands}" if n_bands != src.count else "")
+              + f"  |  {src.driver}" + ("  (read into memory)" if in_memory else ""))
+        print(f"CRS   : {crs or 'none (pixel coordinates)'}")
         if use_mask:
             mask_source = "required (--mask)" if require_mask else "auto-detected"
         else:
@@ -148,10 +187,14 @@ def patchify(sheet_id: str, require_mask: bool, repo_root: Path):
                 if tile.sum() / (size * size) < min_cov:
                     continue
 
-            data = src.read(window=Window(col_off, row_off, pw, ph))
+            if full_img is not None:
+                data = full_img[:, row_off:row_off + ph, col_off:col_off + pw]
+            else:
+                data = src.read(indexes=list(range(1, n_bands + 1)),
+                                window=Window(col_off, row_off, pw, ph))
 
             if pw < size or ph < size:
-                padded = np.full((src.count, size, size), pad, dtype=data.dtype)
+                padded = np.full((n_bands, size, size), pad, dtype=data.dtype)
                 padded[:, :ph, :pw] = data
                 data = padded
 

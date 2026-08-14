@@ -49,6 +49,18 @@ def load_config() -> dict:
     return yaml.safe_load(p.read_text())
 
 
+# Raw map formats, in resolution priority (matches patchify.py).
+RAW_EXTENSIONS = (".tif", ".tiff", ".vrt", ".jpg", ".jpeg", ".png")
+
+
+def find_raw(raw_root: Path, sheet_id: str) -> Path | None:
+    for ext in RAW_EXTENSIONS:
+        p = raw_root / sheet_id / f"{sheet_id}{ext}"
+        if p.exists():
+            return p
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Weight resolution
 # ---------------------------------------------------------------------------
@@ -127,7 +139,7 @@ def build_patch_df(meta: pd.DataFrame, patches_dir: Path) -> tuple[pd.DataFrame,
 
 def build_parent_df(
     sheet_id: str,
-    raw_path: Path,
+    raw_path: Path | None,
     meta: pd.DataFrame,
 ) -> tuple[pd.DataFrame, bool]:
     """
@@ -151,10 +163,10 @@ def build_parent_df(
     row0 = meta.iloc[0]
     has_georef = str(row0.has_georef).strip().lower() == "true"
 
-    if raw_path.exists():
+    if raw_path is not None and raw_path.exists():
         with rasterio.open(raw_path) as src:
             img_w, img_h = src.width, src.height
-            # Read georef directly from the raw TIF — never from meta.iloc[0].
+            # Read georef directly from the raw map — never from meta.iloc[0].
             # When --mask is used, the first CSV row is the first patch that
             # passed the mask filter, which may be far from pixel (0, 0).
             # Using its tf_c/tf_f as the image origin introduces a systematic
@@ -197,7 +209,7 @@ def build_parent_df(
 
     parent_df = pd.DataFrame(
         [{
-            "image_path":   str(raw_path) if raw_path.exists() else "",
+            "image_path":   str(raw_path) if (raw_path and raw_path.exists()) else "",
             "coordinates":  (left, bottom, right, top),
             "dlon":         dlon,
             "dlat":         dlat,
@@ -309,7 +321,7 @@ def predict(sheet_id: str, repo_root: Path,
     # Paths
     patches_dir  = repo_root / paths_cfg["patches"] / "images"  / sheet_id
     meta_path    = repo_root / paths_cfg["patches"] / "metadata" / f"{sheet_id}_patches.csv"
-    raw_path     = repo_root / paths_cfg["raw"]     / sheet_id  / f"{sheet_id}.tif"
+    raw_path     = find_raw(repo_root / paths_cfg["raw"], sheet_id)
     pred_dir     = repo_root / paths_cfg["predictions"] / "text" / sheet_id
     outputs_dir  = repo_root / paths_cfg["outputs"]
     gpkg_path    = outputs_dir / f"{sheet_id}.gpkg"

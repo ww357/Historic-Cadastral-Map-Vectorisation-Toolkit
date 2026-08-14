@@ -62,6 +62,18 @@ except ImportError:
 
 # ── Input GeoPackage resolution ───────────────────────────────────────────────
 
+# Raw map formats, in resolution priority (matches patchify.py).
+RAW_EXTENSIONS = (".tif", ".tiff", ".vrt", ".jpg", ".jpeg", ".png")
+
+
+def find_raw(raw_root: Path, sheet_id: str) -> Path | None:
+    for ext in RAW_EXTENSIONS:
+        p = raw_root / sheet_id / f"{sheet_id}{ext}"
+        if p.exists():
+            return p
+    return None
+
+
 def find_mended(sheet_id: str, cfg: dict) -> Path | None:
     """Hand-corrected GeoPackage for the sheet in paths.outputs_mended, or None.
     Exact name first, then any *.gpkg containing the sheet ID (e.g. 'Porlock mended.gpkg')."""
@@ -267,7 +279,7 @@ def main() -> None:
     min_area = args.min_area if args.min_area is not None else feat_min_area
 
     gpkg_path = resolve_input_gpkg(args.sheet, cfg, args.gpkg, args.mended)
-    tif_path  = ROOT / paths["raw"]         / args.sheet / f"{args.sheet}.tif"
+    tif_path  = find_raw(ROOT / paths["raw"], args.sheet)
     out_dir   = (ROOT / paths["annotations"]
                  / args.feature / "feedback" / args.sheet)
 
@@ -277,8 +289,8 @@ def main() -> None:
             f"Run predict.py + vectorise.py for feature '{args.feature}' first, "
             "then correct in QGIS."
         )
-    if not tif_path.exists():
-        sys.exit(f"TIF not found: {tif_path}")
+    if tif_path is None:
+        sys.exit(f"Raw map not found for '{args.sheet}' in {ROOT / paths['raw'] / args.sheet}/")
 
     (out_dir / "images").mkdir(parents=True, exist_ok=True)
     (out_dir / "masks").mkdir(parents=True, exist_ok=True)

@@ -31,6 +31,7 @@ ROOT = Path(__file__).resolve().parent
 # U-Net (solid + dashed), polygons = PyTorch (MapSAM / text / parcels).
 COMMANDS: dict[str, tuple[str, str | None]] = {
     # 01 patchify
+    "reproject":          ("steps/01_patchify/reproject.py",              "maptools"),
     "draw-mask":          ("steps/01_patchify/draw_mask.py",              "maptools"),
     "patchify":           ("steps/01_patchify/patchify.py",               "maptools"),
     # 02 annotate
@@ -66,7 +67,7 @@ COMMANDS: dict[str, tuple[str, str | None]] = {
 
 # Printed by `list`, grouped so the pipeline order is obvious.
 GROUPS = [
-    ("01 patchify",  ["draw-mask", "patchify"]),
+    ("01 patchify",  ["reproject", "draw-mask", "patchify"]),
     ("02 annotate",  ["annotate", "export-masks"]),
     ("03 finetune",  ["train-lines", "train-dashed", "dashed-masks",
                       "train-polygons", "evaluate-lines"]),

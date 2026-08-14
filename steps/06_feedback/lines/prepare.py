@@ -76,6 +76,19 @@ def load_config() -> dict:
     return yaml.safe_load(p.read_text())
 
 
+# Raw map formats, in resolution priority (matches patchify.py). Used only to
+# read georef; assumed non-georeferenced when absent.
+RAW_EXTENSIONS = (".tif", ".tiff", ".vrt", ".jpg", ".jpeg", ".png")
+
+
+def find_raw(raw_root: Path, sheet_id: str) -> Path | None:
+    for ext in RAW_EXTENSIONS:
+        p = raw_root / sheet_id / f"{sheet_id}{ext}"
+        if p.exists():
+            return p
+    return None
+
+
 def find_mended(sheet_id: str, cfg: dict) -> Path | None:
     """Hand-corrected GeoPackage for the sheet in paths.outputs_mended, or None.
     Exact name first, then any *.gpkg containing the sheet ID (e.g. 'Porlock mended.gpkg')."""
@@ -379,7 +392,7 @@ def main():
     pred_dir     = ROOT / paths["predictions"] / "boundaries" / sheet_id
     img_dir      = ROOT / paths["patches"]     / "images"    / sheet_id
     ann_mask_dir = ROOT / paths["annotations"] / boundary_label / sheet_id / "masks"
-    raw_path     = ROOT / paths["raw"]         / sheet_id / f"{sheet_id}.tif"
+    raw_path     = find_raw(ROOT / paths["raw"], sheet_id)
     feedback_dir = ROOT / "data" / "feedback"  / "boundary" / sheet_id
 
     feedback_dir.mkdir(parents=True, exist_ok=True)
@@ -403,15 +416,15 @@ def main():
     if boundaries_gdf.empty:
         print("Warning: 'boundaries' layer is empty. Feedback masks will all be blank.")
 
-    # ---- Georef from raw TIF ------------------------------------------------
+    # ---- Georef from raw map ------------------------------------------------
     img_transform: Affine | None = None
     has_georef = False
-    if raw_path.exists():
+    if raw_path is not None:
         with rasterio.open(raw_path) as src:
             has_georef    = src.crs is not None
             img_transform = src.transform if has_georef else None
     else:
-        print(f"Warning: raw TIF not found at {raw_path} — assuming non-georeferenced.")
+        print("Warning: raw map not found — assuming non-georeferenced.")
 
     # ---- Patch metadata -----------------------------------------------------
     meta = pd.read_csv(meta_path)

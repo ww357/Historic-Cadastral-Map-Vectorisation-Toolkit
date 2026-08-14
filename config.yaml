@@ -12,6 +12,16 @@ paths:
   logs: models/logs/
   parcel_points: data/parcel_points/
 
+reproject:
+  # Optional ingest step (steps/01_patchify/reproject.py) that warps a
+  # georeferenced map to a tiled GeoTIFF in the target CRS, written to
+  # data/raw/<sheet>/<sheet>.tif (which find_raw then prefers over the source).
+  # Run it before patchify for maps not already in British National Grid at the
+  # training scale — e.g. WGS84/degree scans. Ungeoreferenced inputs are skipped.
+  target_crs: EPSG:27700   # British National Grid (metres) — matches the models + config thresholds
+  resolution: 0.5          # metres per pixel — matches the ~0.5 m/px BNG training data
+  resampling: bilinear     # nearest | bilinear | cubic | lanczos | average
+
 patchify:
   patch_size: 512         # px — boundaries/MapSAM use 512px patches directly;
                           # text model stitches 2×2 patches to 1024px before inference

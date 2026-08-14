@@ -78,6 +78,19 @@ def feature_config(cfg: dict, feature: str) -> dict:
     return {"simplify_tolerance": 2.0, "min_area": 25.0}
 
 
+# Raw map formats, in resolution priority (matches patchify.py). Used only to
+# read dimensions + georef; falls back to the metadata CSV when absent.
+RAW_EXTENSIONS = (".tif", ".tiff", ".vrt", ".jpg", ".jpeg", ".png")
+
+
+def find_raw(raw_root: Path, sheet_id: str) -> Path | None:
+    for ext in RAW_EXTENSIONS:
+        p = raw_root / sheet_id / f"{sheet_id}{ext}"
+        if p.exists():
+            return p
+    return None
+
+
 def _rel(p: Path) -> str:
     """Path relative to ROOT for printing, falling back to absolute for --gpkg
     targets outside the repo."""
@@ -142,7 +155,7 @@ def stitch(sheet_id: str, feature: str, cfg: dict) -> tuple[Path, dict]:
     """
     paths = cfg["paths"]
 
-    raw_path     = ROOT / paths["raw"]         / sheet_id / f"{sheet_id}.tif"
+    raw_path     = find_raw(ROOT / paths["raw"], sheet_id)
     meta_path    = ROOT / paths["patches"]     / "metadata" / f"{sheet_id}_patches.csv"
     pred_dir     = ROOT / paths["predictions"] / feature / sheet_id
     ann_mask_dir = ROOT / paths["annotations"] / feature / sheet_id / "masks"
@@ -158,14 +171,14 @@ def stitch(sheet_id: str, feature: str, cfg: dict) -> tuple[Path, dict]:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Source dimensions + georef
-    if raw_path.exists():
+    if raw_path is not None:
         with rasterio.open(raw_path) as src:
             img_w, img_h = src.width, src.height
             has_georef   = src.crs is not None
             crs          = src.crs if has_georef else None
             transform    = src.transform
     else:
-        print(f"Warning: raw file not found at {raw_path}, deriving dimensions from metadata.")
+        print("Warning: raw map not found, deriving dimensions from metadata.")
         meta_tmp   = pd.read_csv(meta_path)
         img_w      = int((meta_tmp["col_off"] + meta_tmp["patch_w"]).max())
         img_h      = int((meta_tmp["row_off"] + meta_tmp["patch_h"]).max())

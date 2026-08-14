@@ -52,6 +52,19 @@ def load_config() -> dict:
     return yaml.safe_load(p.read_text())
 
 
+# Raw map formats, in resolution priority (matches patchify.py).
+RAW_EXTENSIONS = (".tif", ".tiff", ".vrt", ".jpg", ".jpeg", ".png")
+
+
+def find_raw(raw_root: Path, sheet_id: str) -> Path | None:
+    """Return data/raw/<sheet>/<sheet>.<ext> for the first supported extension."""
+    for ext in RAW_EXTENSIONS:
+        p = raw_root / sheet_id / f"{sheet_id}{ext}"
+        if p.exists():
+            return p
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Image loading (downsampled for display)
 # ---------------------------------------------------------------------------
@@ -278,14 +291,15 @@ def render_mask(
 def draw_mask(sheet_id: str, preview_size: int):
     cfg = load_config()
 
-    raw_path = ROOT / cfg["paths"]["raw"]   / sheet_id / f"{sheet_id}.tif"
+    raw_path = find_raw(ROOT / cfg["paths"]["raw"], sheet_id)
     out_dir  = ROOT / cfg["paths"]["masks"] / sheet_id
     out_path = out_dir / f"{sheet_id}.png"
 
-    if not raw_path.exists():
+    if raw_path is None:
+        exts = "/".join(e.lstrip(".") for e in RAW_EXTENSIONS)
         sys.exit(
-            f"Source image not found: {raw_path}\n"
-            f"Place the GeoTIFF at data/raw/{sheet_id}/{sheet_id}.tif and try again."
+            f"Source image not found for '{sheet_id}'.\n"
+            f"Place the map at data/raw/{sheet_id}/{sheet_id}.({exts}) and try again."
         )
 
     print(f"Sheet        : {sheet_id}")

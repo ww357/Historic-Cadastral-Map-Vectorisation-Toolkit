@@ -31,6 +31,17 @@ TICK, CROSS = "OK", "--"
 # under annotations/ or predictions/ is treated as a MapSAM feature.
 _NON_MAPSAM = {"boundaries", "dashed", "text", "parcels", "parcel"}
 
+# Raw map formats accepted as input (matches patchify.py).
+RAW_EXTENSIONS = (".tif", ".tiff", ".vrt", ".jpg", ".jpeg", ".png")
+
+
+def _find_raw(raw_root: Path, sheet_id: str) -> Path | None:
+    for ext in RAW_EXTENSIONS:
+        p = raw_root / sheet_id / f"{sheet_id}{ext}"
+        if p.exists():
+            return p
+    return None
+
 
 def load_config() -> dict:
     p = ROOT / "config.yaml"
@@ -72,7 +83,7 @@ def gather(sheet: str, cfg: dict) -> dict:
     paths = cfg["paths"]
     boundary_label = cfg.get("annotation", {}).get("boundary_label", "boundary")
 
-    raw       = ROOT / paths["raw"] / sheet / f"{sheet}.tif"
+    raw       = _find_raw(ROOT / paths["raw"], sheet)
     patch_dir = ROOT / paths["patches"] / "images" / sheet
     meta_csv  = ROOT / paths["patches"] / "metadata" / f"{sheet}_patches.csv"
     ann_root  = ROOT / paths["annotations"]
@@ -140,7 +151,7 @@ def gather(sheet: str, cfg: dict) -> dict:
     }
 
     return {
-        "sheet": sheet, "raw": raw.exists(), "mask": mask,
+        "sheet": sheet, "raw": raw is not None, "mask": mask,
         "patches": _count_pngs(patch_dir), "meta": meta_csv.exists(),
         "annotations": annotations, "weights": weights,
         "predictions": predictions, "stitched": stitched,
@@ -154,7 +165,7 @@ def suggest_next(s: dict) -> str | None:
     """First gap in the canonical order, as a runnable run.py command."""
     sheet = s["sheet"]
     if not s["raw"]:
-        return f"# place the GeoTIFF at data/raw/{sheet}/{sheet}.tif first"
+        return f"# place the map at data/raw/{sheet}/{sheet}.(tif|jpg|png|vrt) first"
     if not s["patches"]:
         flag = " --mask" if s["mask"] else ""
         return f"python run.py patchify --sheet {sheet}{flag}"
@@ -201,7 +212,7 @@ def print_report(s: dict) -> None:
     print(f"\nSheet: {sheet}")
     print("-" * 60)
 
-    print(f"  raw tif      {TICK if s['raw'] else CROSS}")
+    print(f"  raw map      {TICK if s['raw'] else CROSS}")
     print(f"  area mask    {TICK + '  ' + s['mask'].name if s['mask'] else CROSS + '  (optional)'}")
 
     meta = "" if s["meta"] else "   (metadata CSV missing)"
