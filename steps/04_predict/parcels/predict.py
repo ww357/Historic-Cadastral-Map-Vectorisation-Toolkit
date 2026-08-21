@@ -134,8 +134,8 @@ def find_raw(raw_root: Path, sheet_id: str) -> Path | None:
 def resolve_points_file(pts_dir: Path, sheet: str, default_name: str) -> Path:
     """
     Prefer a GeoPackage in pts_dir whose filename contains the sheet name (e.g.
-    'StokePero_points.gpkg'), so per-sheet point files are picked up automatically.
-    Falls back to the configured default ('Holnicote Apportionment Points.gpkg').
+    '<sheet>_points.gpkg'), so per-sheet point files are picked up automatically.
+    Falls back to the configured parcels.points_file default.
     """
     if pts_dir.exists():
         matches = sorted(p for p in pts_dir.glob("*.gpkg")
@@ -459,7 +459,7 @@ def main() -> None:
     compactness = float(pcfg.get("compactness", 0.0))
     use_mask    = bool(pcfg.get("use_map_mask", True))
     min_px      = int(pcfg.get("min_region_px", 64))
-    points_file = pcfg.get("points_file", "Holnicote Apportionment Points.gpkg")
+    points_file = pcfg.get("points_file", "apportionment_points.gpkg")
     # paths.outputs_mended is the shared location every step uses; parcels.mended_dir
     # is kept only as a fallback for configs written before it was unified.
     mended_dir  = ROOT / (paths.get("outputs_mended")

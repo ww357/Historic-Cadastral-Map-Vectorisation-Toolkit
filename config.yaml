@@ -165,7 +165,9 @@ parcels:
   # (smoothed) boundary lines are ridges, and every pixel is assigned to the
   # nearest enclosed parcel.  Parcel extent is defined by the boundaries, so it
   # handles wildly different parcel sizes natively, and N points → N parcels.
-  points_file: Holnicote Apportionment Points.gpkg  # filename within paths.parcel_points/
+  points_file: apportionment_points.gpkg  # filename within paths.parcel_points/ — set per project.
+                                          # A per-sheet file (e.g. <sheet>_points.gpkg) is picked up
+                                          # automatically and takes precedence over this default.
 
   # Watershed surface shaping — these bridge the dashed/gappy boundaries that
   # made strict polygonisation fail.  The seeds provide topological closure; the
@@ -210,12 +212,9 @@ parcels:
   size_unit: acres                  # acres | ha | m2 | perches — unit of size_column values
   size_factor: 1.8                  # allow up to this × recorded area before trimming (fuzzy)
 
-  # Superseded by paths.outputs_mended, which every step now uses for both reading
-  # and writing hand-corrected GeoPackages (always opt-in via --mended). Kept only
-  # as a fallback for configs written before the two were unified; delete once
-  # paths.outputs_mended is set.
-  mended_dir: data/mended outputs   # folder of QGIS-corrected boundary GeoPackages
   mended_line_width_px: 3           # px width to rasterise mended boundary lines at
+                                    #   (used by parcels/predict.py --mended). The mended-file
+                                    #   location is paths.outputs_mended (opt-in via --mended).
 
   # Shared with parcels/vectorise.py (attribute join + GeoPackage write):
   min_area: 50.0               # m² — discard parcels smaller than this
@@ -226,7 +225,7 @@ parcels:
 # active script. To revive, restore temp/sam_parcels/* and rename these keys back
 # to `parcels:` / `parcel_finetune:`.
 sam_parcels_archived:
-  points_file: Holnicote Apportionment Points.gpkg
+  points_file: apportionment_points.gpkg
   tile_size: 1024
   sam_input_size: 1024
   overlap: 128

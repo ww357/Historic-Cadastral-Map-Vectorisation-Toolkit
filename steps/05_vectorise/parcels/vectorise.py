@@ -244,12 +244,12 @@ def main() -> None:
 
     min_area     = float(pcfg.get("min_area",           50.0))
     simplify_tol = float(pcfg.get("simplify_tolerance",  1.0))
-    points_file  = pcfg.get("points_file", "Holnicote Apportionment Points.gpkg")
+    points_file  = pcfg.get("points_file", "apportionment_points.gpkg")
 
     pred_geojson = (ROOT / paths["predictions"]
                     / "parcels" / sheet_id / "parcel_preds.geojson")
     # Match parcels/predict.py: prefer the sheet-specific points file for the
-    # attribute join (e.g. "Porlock Points.gpkg"), else the configured default.
+    # attribute join (e.g. "<sheet>_points.gpkg"), else the configured default.
     points_path  = _resolve_in_dir(ROOT / paths["parcel_points"], sheet_id, points_file)
 
     # --mended writes the `parcels` layer INTO the hand-corrected GeoPackage so it
