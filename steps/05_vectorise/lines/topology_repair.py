@@ -65,7 +65,7 @@ def repair_topology(
     Parameters
     ----------
     gdf              : GeoDataFrame of LineString geometries (world coords)
-    snap_distance    : maximum gap to bridge, in CRS units (metres for BNG)
+    snap_distance    : maximum gap to bridge, in CRS units (metres in any projected CRS)
     angle_tolerance  : maximum bearing difference (degrees) for endpoint→endpoint
                        bridges. None = no angle check (connects any nearby pair).
                        Use ~25° to restrict to collinear fragments only.

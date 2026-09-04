@@ -16,10 +16,12 @@ reproject:
   # Optional ingest step (steps/01_patchify/reproject.py) that warps a
   # georeferenced map to a tiled GeoTIFF in the target CRS, written to
   # data/raw/<sheet>/<sheet>.tif (which find_raw then prefers over the source).
-  # Run it before patchify for maps not already in British National Grid at the
-  # training scale — e.g. WGS84/degree scans. Ungeoreferenced inputs are skipped.
-  target_crs: EPSG:27700   # British National Grid (metres) — matches the models + config thresholds
-  resolution: 0.5          # metres per pixel — matches the ~0.5 m/px BNG training data
+  # Run it before patchify for maps not already in a PROJECTED METRE CRS at the
+  # training scale — e.g. WGS84/degree scans (patchify errors on a degree CRS).
+  # target_crs may be any projected metre CRS (BNG, UTM, Irish Grid, ...), not
+  # only BNG. Ungeoreferenced inputs have no CRS to reproject and are skipped.
+  target_crs: EPSG:27700   # default British National Grid (metres); set to your CRS if different
+  resolution: 0.5          # metres per pixel — matches the ~0.5 m/px training data
   resampling: bilinear     # nearest | bilinear | cubic | lanczos | average
 
 patchify:
@@ -66,19 +68,19 @@ dashed:
 
 vectorise:
   boundaries:
-    simplify_tolerance: 2.0  # Douglas-Peucker tolerance in CRS units (metres for BNG,
+    simplify_tolerance: 2.0  # Douglas-Peucker tolerance in CRS units (metres in any projected CRS, 
                              # pixels for non-georef). Increase to generalise more.
     min_length: 10.0         # discard lines shorter than this (same units as above)
     topology_repair:
       enabled: false         # set true to add bridging segments after vectorisation
-      snap_distance: 15.0    # maximum gap to bridge in CRS units (metres for BNG)
+      snap_distance: 15.0    # maximum gap to bridge in CRS units (metres in any projected CRS)
                              # keep conservative — start low and increase if needed
                              # a good starting point is 3–5× simplify_tolerance
       angle_tolerance: null  # degrees; null = bridge any nearby endpoint pair
                              # set e.g. 25 to restrict to roughly collinear lines only
                              # (avoids bridging two unrelated boundaries at a corner)
   dashed:
-    simplify_tolerance: 2.0  # Douglas-Peucker tolerance in CRS units (metres for BNG)
+    simplify_tolerance: 2.0  # Douglas-Peucker tolerance in CRS units (metres in any projected CRS)
     min_length: 10.0         # discard lines shorter than this (same units as above)
     topology_repair:
       enabled: false         # dashed lines are gappy by definition — worth trying true if
@@ -89,7 +91,7 @@ vectorise:
   # Per-feature overrides take precedence; "default" is used when no specific entry exists.
   features:
     default:
-      simplify_tolerance: 2.0  # Douglas-Peucker tolerance in CRS units (metres for BNG)
+      simplify_tolerance: 2.0  # Douglas-Peucker tolerance in CRS units (metres in any projected CRS)
       min_area: 25.0            # discard polygons smaller than this (same units squared)
     # Per-feature overrides — uncomment and adjust as needed:
     # water:
@@ -218,7 +220,7 @@ parcels:
 
   # Shared with parcels/vectorise.py (attribute join + GeoPackage write):
   min_area: 50.0               # m² — discard parcels smaller than this
-  simplify_tolerance: 1.0      # Douglas-Peucker tolerance in CRS units (metres for BNG)
+  simplify_tolerance: 1.0      # Douglas-Peucker tolerance in CRS units (metres in any projected CRS)
 
 # ── ARCHIVED: point-prompted SAM parcel approach (superseded by watershed) ─────
 # Kept for reference only. Scripts live in temp/sam_parcels/. Not read by any

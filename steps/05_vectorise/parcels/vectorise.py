@@ -76,21 +76,46 @@ from shapely.geometry import shape as shapely_shape  # noqa: E402
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def read_geojson_to_gdf(path: Path) -> gpd.GeoDataFrame:
-    """
-    Read a GeoJSON file using the stdlib json module + shapely, bypassing
-    geopandas / fiona / pyproj CRS resolution entirely.
-    Returns a GeoDataFrame with CRS set to EPSG:27700 (all parcel predictions
-    are in BNG — the TIF and GeoPackage are both EPSG:27700).
+# Self-contained PROJ4 for OSGB36 / British National Grid — fully numeric, so PROJ
+# needs no database lookup. Used as a fast-path for EPSG:27700 so BNG output is
+# byte-identical and still works even if proj.db is unavailable.
+_BNG_PROJ4 = (
+    "+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 "
+    "+x_0=400000 +y_0=-100000 "
+    "+a=6377563.396 +b=6356256.909 "
+    "+towgs84=446.448,-125.157,542.06,0.15,0.247,0.842,-20.489 "
+    "+units=m +no_defs"
+)
 
-    CRS strategy: build pyproj.CRS from a fully self-contained PROJ4 string
-    (explicit ellipsoid radii + towgs84 shifts) so PROJ never needs to query
-    its database.  Passing the resulting CRS *object* to gdf.crs bypasses the
-    second lookup that geopandas would otherwise make via from_user_input().
+
+def _geojson_epsg(doc: dict) -> int | None:
+    """Extract the EPSG code from a GeoJSON crs member (written by parcels/predict.py).
+
+    Handles 'urn:ogc:def:crs:EPSG::27700' and 'EPSG:27700' forms. Returns None if
+    there is no crs member (predict.py omits it for a source with no EPSG code).
+    """
+    name = (((doc.get("crs") or {}).get("properties") or {}).get("name") or "")
+    digits = name.rsplit(":", 1)[-1] if ":" in name else ""
+    return int(digits) if digits.isdigit() else None
+
+
+def read_geojson_to_gdf(path: Path) -> tuple[gpd.GeoDataFrame, int | None]:
+    """
+    Read a GeoJSON using stdlib json + shapely, bypassing geopandas/fiona/pyproj
+    CRS resolution. Returns (gdf, epsg) where epsg is the source CRS code carried
+    in the GeoJSON crs member (any projected CRS — BNG, UTM, Irish Grid, ...), or
+    None if the source had no EPSG.
+
+    CRS strategy: EPSG:27700 uses the self-contained BNG PROJ4 above (no db lookup,
+    byte-identical to before). Any other EPSG is built with pyproj.CRS.from_epsg,
+    which resolves via proj.db (located by the PROJ_DATA fix at the top of this
+    file). Passing a pyproj.CRS *object* to gdf.crs avoids a second lookup.
     """
     import pyproj
 
     doc = json.loads(path.read_text())
+    epsg = _geojson_epsg(doc)
+
     rows: list[dict] = []
     for feat in doc.get("features", []):
         props = feat.get("properties") or {}
@@ -99,26 +124,20 @@ def read_geojson_to_gdf(path: Path) -> gpd.GeoDataFrame:
 
     gdf = gpd.GeoDataFrame(rows, geometry="geometry")
 
-    # PROJ4 for OSGB36 / British National Grid — fully numeric, no authority-code lookup.
-    # +a/+b replace +ellps=airy; +towgs84 replaces +datum=OSGB36.
-    # PROJ can construct this entirely from built-in projection code, no proj.db needed.
-    BNG_PROJ4 = (
-        "+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 "
-        "+x_0=400000 +y_0=-100000 "
-        "+a=6377563.396 +b=6356256.909 "
-        "+towgs84=446.448,-125.157,542.06,0.15,0.247,0.842,-20.489 "
-        "+units=m +no_defs"
-    )
-    try:
-        bng_crs = pyproj.CRS.from_proj4(BNG_PROJ4)
-        # Assigning a pyproj.CRS object calls from_user_input(obj) internally,
-        # which just copies it — no EPSG database lookup.
-        gdf.crs = bng_crs
-    except Exception as exc:
-        print(f"  Warning: could not set CRS ({exc}); CRS will be absent from output. "
-              "You can assign it manually in QGIS.")
+    if epsg is None:
+        print("  Note: GeoJSON has no CRS code — output CRS will be unset; "
+              "assign it in QGIS.")
+        return gdf, None
 
-    return gdf
+    try:
+        crs_obj = pyproj.CRS.from_proj4(_BNG_PROJ4) if epsg == 27700 \
+                  else pyproj.CRS.from_epsg(epsg)
+        gdf.crs = crs_obj
+    except Exception as exc:
+        print(f"  Warning: could not set CRS EPSG:{epsg} ({exc}); CRS will be absent "
+              "from output. You can assign it manually in QGIS.")
+
+    return gdf, epsg
 
 
 def read_gpkg_attrs(path: Path) -> pd.DataFrame:
@@ -273,7 +292,7 @@ def main() -> None:
 
     # ── Load predictions (json + shapely — no pyproj CRS lookup) ─────────────
     print(f"Reading {pred_geojson.name} ...")
-    gdf = read_geojson_to_gdf(pred_geojson)
+    gdf, src_epsg = read_geojson_to_gdf(pred_geojson)
     print(f"  {len(gdf):,} raw parcel polygons   CRS: {gdf.crs}")
 
     # ── Min-area filter ───────────────────────────────────────────────────────
@@ -356,7 +375,7 @@ def main() -> None:
     # fiona/geopandas.to_file() fails because GDAL can't build a SpatialReference
     # from our pyproj-based CRS object (same broken proj.db, different callsite).
     # ogr2ogr is a subprocess that runs in the conda env's full GDAL context
-    # (GDAL_DATA / PROJ_DATA env vars set by conda activate), so EPSG:27700
+    # (GDAL_DATA / PROJ_DATA env vars set by conda activate), so the EPSG code
     # resolves correctly there even though the Python-side pyproj is broken.
     import subprocess
     import tempfile
@@ -442,10 +461,13 @@ def main() -> None:
         str(gpkg_path),
         str(tmp),
         "-nln", "parcels",
-        "-a_srs", "EPSG:27700",
         "-nlt", "POLYGON",
         "-update",              # append to existing GPKG (keeps other layers)
     ]
+    # Assign the source CRS (any projected CRS) via GDAL's own EPSG database.
+    # Omit -a_srs when the source had no EPSG so we don't stamp a wrong CRS.
+    if src_epsg is not None:
+        cmd += ["-a_srs", f"EPSG:{src_epsg}"]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:

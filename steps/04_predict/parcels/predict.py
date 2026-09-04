@@ -76,8 +76,8 @@ ROOT = Path(__file__).resolve().parents[3]
 
 # ── PROJ database fix (mirror of the SAM parcel scripts) ───────────────────────
 # pyproj can fail to locate proj.db in pip-installed conda envs.  We never need
-# CRS *resolution* here (everything is EPSG:27700 and we read coords via WKB),
-# but rasterio still imports fine; this guard is kept for parity/safety.
+# CRS *resolution* here (coords are read via WKB and the source EPSG is carried
+# through numerically), but rasterio still imports fine; kept for parity/safety.
 if "PROJ_DATA" not in os.environ:
     _env_root = Path(sys.executable).parents[1]
     _cands = [_env_root / "share" / "proj"]
@@ -536,10 +536,14 @@ def main() -> None:
     with rasterio.open(grid_src) as src:
         transform = src.transform
         H, W = src.height, src.width
+        # Honest CRS: carry the source EPSG through to the GeoJSON. None means the
+        # source has no CRS, or a custom CRS with no EPSG code — do NOT fabricate one
+        # (a silent default would mislabel the output), let the writer omit the crs
+        # member and warn instead.
         try:
-            epsg = src.crs.to_epsg() or 27700
+            epsg = src.crs.to_epsg() if src.crs is not None else None
         except Exception:
-            epsg = 27700
+            epsg = None
 
     # ── Build the watershed ridge surface from all extent features ────────────
     # Each feature contributes a weighted ridge; we take the max so solid lines
@@ -721,9 +725,13 @@ def main() -> None:
             },
         })
 
-    crs_member = {"type": "name",
-                  "properties": {"name": f"urn:ogc:def:crs:EPSG::{epsg}"}}
-    doc = {"type": "FeatureCollection", "crs": crs_member, "features": feats}
+    doc = {"type": "FeatureCollection", "features": feats}
+    if epsg is not None:
+        doc["crs"] = {"type": "name",
+                      "properties": {"name": f"urn:ogc:def:crs:EPSG::{epsg}"}}
+    else:
+        print("  Note: source CRS has no EPSG code — writing GeoJSON without a CRS "
+              "member. Set the CRS on the parcels layer in QGIS after vectorising.")
     out_geojson.write_text(json.dumps(doc, separators=(",", ":")))
     features = feats   # for the summary print below
 

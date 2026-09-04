@@ -144,6 +144,25 @@ def patchify(sheet_id: str, require_mask: bool, repo_root: Path):
 
         img_w, img_h = src.width, src.height
         has_georef = src.crs is not None
+
+        # Units guard: the pipeline's thresholds (simplify_tolerance, min_length,
+        # min_area, the parcel size cap) are LINEAR CRS UNITS. In a projected CRS
+        # (BNG, UTM, Irish Grid, ...) those are metres and work as intended. In a
+        # geographic CRS they are DEGREES, so "5" would mean 5° (~500 km) — every
+        # threshold would be meaningless. Reproject to a projected metre CRS first.
+        # (No CRS at all is fine: the ungeoreferenced pixel-coordinate path.)
+        if has_georef and src.crs.is_geographic:
+            sys.exit(
+                f"'{raw_path.name}' is in a geographic (degree-based) CRS: "
+                f"{src.crs.to_string()}.\n"
+                "The pipeline's thresholds are in linear CRS units (metres), so a "
+                "degree CRS would make every threshold meaningless.\n"
+                "Reproject to a projected metre CRS first (BNG, UTM, Irish Grid, ...):\n"
+                f"  python steps/01_patchify/reproject.py --sheet {sheet_id}\n"
+                "Set the target under `reproject:` in config.yaml (default EPSG:27700). "
+                "The reprojected GeoTIFF is then used automatically."
+            )
+
         crs = src.crs.to_string() if has_georef else ""
         base_tf = src.transform
 
