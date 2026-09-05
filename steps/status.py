@@ -1,8 +1,8 @@
 """
 Report how far a sheet has progressed through the pipeline.
 
-Answers "where am I on this sheet?" by inspecting what actually exists on disk —
-patches, annotations, weights, predictions, GeoPackage layers, feedback tiles —
+Answers "where am I on this sheet?" by inspecting what actually exists on disk -
+patches, annotations, weights, predictions, GeoPackage layers, feedback tiles -
 and suggests the next command to run.
 
 Deliberately depends on nothing beyond the standard library + PyYAML, so it runs
@@ -21,33 +21,16 @@ import sqlite3
 import sys
 from pathlib import Path
 
-import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
+from common import find_raw, load_config   # noqa: E402
 
 TICK, CROSS = "OK", "--"
 
 # Feature folders that are not MapSAM polygon classes; everything else found
 # under annotations/ or predictions/ is treated as a MapSAM feature.
 _NON_MAPSAM = {"boundaries", "dashed", "text", "parcels", "parcel"}
-
-# Raw map formats accepted as input (matches patchify.py).
-RAW_EXTENSIONS = (".tif", ".tiff", ".vrt", ".jpg", ".jpeg", ".png")
-
-
-def _find_raw(raw_root: Path, sheet_id: str) -> Path | None:
-    for ext in RAW_EXTENSIONS:
-        p = raw_root / sheet_id / f"{sheet_id}{ext}"
-        if p.exists():
-            return p
-    return None
-
-
-def load_config() -> dict:
-    p = ROOT / "config.yaml"
-    if not p.exists():
-        sys.exit(f"config.yaml not found at {p}")
-    return yaml.safe_load(p.read_text())
 
 
 def _count_pngs(d: Path) -> int:
@@ -83,7 +66,7 @@ def gather(sheet: str, cfg: dict) -> dict:
     paths = cfg["paths"]
     boundary_label = cfg.get("annotation", {}).get("boundary_label", "boundary")
 
-    raw       = _find_raw(ROOT / paths["raw"], sheet)
+    raw       = find_raw(ROOT / paths["raw"], sheet)
     patch_dir = ROOT / paths["patches"] / "images" / sheet
     meta_csv  = ROOT / paths["patches"] / "metadata" / f"{sheet}_patches.csv"
     ann_root  = ROOT / paths["annotations"]
@@ -265,7 +248,7 @@ def print_report(s: dict) -> None:
 
     nxt = suggest_next(s)
     print("-" * 60)
-    print(f"  Next: {nxt}" if nxt else "  Next: nothing outstanding — mend in QGIS, then run feedback.")
+    print(f"  Next: {nxt}" if nxt else "  Next: nothing outstanding - mend in QGIS, then run feedback.")
     print()
 
 

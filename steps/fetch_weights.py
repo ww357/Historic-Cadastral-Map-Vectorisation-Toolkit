@@ -3,7 +3,7 @@ Download the base model weights into models/base/ so the toolkit is ready to run
 
 Each model's weights live in a separate HuggingFace repo whose contents mirror
 the destination folder, so fetching is one predictable step per model.  The plain
-SAM ViT-B checkpoint is NOT re-hosted — it is Meta's public, unmodified file and
+SAM ViT-B checkpoint is NOT re-hosted - it is Meta's public, unmodified file and
 is pulled straight from their official URL.
 
     python steps/fetch_weights.py                 # fetch everything missing
@@ -24,7 +24,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# ── Edit these to match YOUR HuggingFace repos ─────────────────────────────────
+# -- Edit these to match YOUR HuggingFace repos ---------------------------------
 # key         : short name for --only
 # repo/url    : HF repo id, or a direct download URL for a single file
 # dest        : folder the files land in (repo contents are mirrored into it)
@@ -50,7 +50,7 @@ WEIGHTS = {
         "dest": "models/base/MapTextPipeline",
         "note": "MapTextPipeline Rumsey weights (rumsey-finetune.pth)",
     },
-    # Meta's public SAM ViT-B checkpoint — fetched from source, never re-hosted.
+    # Meta's public SAM ViT-B checkpoint - fetched from source, never re-hosted.
     "sam": {
         "url": "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth",
         "dest": "models/base/MapSAM/original_weights",
@@ -86,7 +86,7 @@ def _download_repo(repo_id: str, dest: Path) -> None:
         sys.exit(
             "huggingface_hub is required for HF repos:\n"
             "  pip install huggingface_hub\n"
-            "(The SAM checkpoint — --only sam — does not need it.)"
+            "(The SAM checkpoint - --only sam - does not need it.)"
         )
     dest.mkdir(parents=True, exist_ok=True)
     print(f"  fetching {repo_id}")
@@ -122,7 +122,7 @@ def main() -> None:
         dest = ROOT / spec["dest"]
         print(f"\n[{key}]  {spec['note']}")
         if _has_files(dest) and not args.force:
-            print(f"  already present in {spec['dest']} — skipping (use --force to refetch)")
+            print(f"  already present in {spec['dest']} - skipping (use --force to refetch)")
             continue
         if "url" in spec:
             _download_url(spec["url"], dest / Path(spec["url"]).name)
