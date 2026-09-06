@@ -100,7 +100,7 @@ pip install detectron2 \
 ## Activating environments
 
 ```bash
-conda activate maptools     # geospatial steps, annotation, vectorise, text_to_vector
+conda activate maptools     # geospatial steps, annotation, vectorise (incl. text)
 conda activate lines        # U-Net train, predict, feedback
 conda activate polygons     # MapSAM train, predict, text spotting inference
 ```
