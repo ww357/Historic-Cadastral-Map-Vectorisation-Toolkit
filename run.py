@@ -7,7 +7,7 @@ Saves having to remember script paths; all flags after the command are passed
 straight through to the underlying script, so anything the script accepts works
 here unchanged.
 
-This CANNOT switch conda environment for you — a running process cannot change
+This CANNOT switch conda environment for you - a running process cannot change
 its own interpreter. What it does instead is check the active environment before
 launching and stop with the exact activate command if it is wrong, which turns a
 confusing ImportError deep in a script into a one-line fix. Use --force-env to
@@ -60,7 +60,7 @@ COMMANDS: dict[str, tuple[str, str | None]] = {
     "feedback-lines":     ("steps/06_feedback/lines/train.py",            "lines"),
     "prepare-polygons":   ("steps/06_feedback/polygons/prepare.py",       "polygons"),
     "feedback-polygons":  ("steps/06_feedback/polygons/train.py",         "polygons"),
-    # utility — run in any environment
+    # utility - run in any environment
     "status":             ("steps/status.py",                             None),
     "fetch-weights":      ("steps/fetch_weights.py",                      None),
 }
@@ -123,7 +123,7 @@ def main() -> None:
     if not script.exists():
         sys.exit(f"Script not found: {script}")
 
-    # Environment guard — catches the most common failure in a 3-env pipeline
+    # Environment guard - catches the most common failure in a 3-env pipeline
     # before it turns into an ImportError halfway through a script.
     force = "--force-env" in passthrough
     passthrough = [a for a in passthrough if a != "--force-env"]

@@ -2,7 +2,7 @@
 Slice a map sheet into 512px PNG patches.
 
 The raw map may be any of GeoTIFF (.tif/.tiff), GDAL VRT (.vrt), or JPG/PNG,
-georeferenced or not — data/raw/<SHEET_ID>/<SHEET_ID>.<ext>, tried in that
+georeferenced or not - data/raw/<SHEET_ID>/<SHEET_ID>.<ext>, tried in that
 priority order.  Georeferencing is read straight from the file: embedded for
 GeoTIFF/VRT, or from sidecar world file + projection (e.g. <SHEET>.jgw + .prj)
 which GDAL picks up automatically.  A plain JPG/PNG with no sidecars is treated
@@ -38,18 +38,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import rasterio
-import yaml
 from PIL import Image
 from rasterio.transform import Affine
 from rasterio.windows import Window
 from tqdm import tqdm
 
-
-def load_config(repo_root: Path) -> dict:
-    path = repo_root / "config.yaml"
-    if not path.exists():
-        sys.exit(f"config.yaml not found at {path}")
-    return yaml.safe_load(path.read_text())
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # steps/ for shared helpers
+from common import find_mask, find_raw, load_config, RAW_EXTENSIONS   # noqa: E402
 
 
 def patch_grid(img_w: int, img_h: int, size: int, overlap: int) -> list[tuple]:
@@ -80,28 +75,6 @@ def load_mask(mask_path: Path) -> np.ndarray:
     return arr > 0
 
 
-def find_mask(mask_dir: Path, sheet_id: str) -> Path | None:
-    for ext in (".png", ".tif", ".tiff"):
-        p = mask_dir / f"{sheet_id}{ext}"
-        if p.exists():
-            return p
-    return None
-
-
-# Raw map formats, in resolution priority: georeferenced/wrapped forms first,
-# plain images last. GDAL reads world-file + .prj sidecars for jpg/png/tif.
-RAW_EXTENSIONS = (".tif", ".tiff", ".vrt", ".jpg", ".jpeg", ".png")
-
-
-def find_raw(raw_root: Path, sheet_id: str) -> Path | None:
-    """Return data/raw/<sheet>/<sheet>.<ext> for the first supported extension."""
-    for ext in RAW_EXTENSIONS:
-        p = raw_root / sheet_id / f"{sheet_id}{ext}"
-        if p.exists():
-            return p
-    return None
-
-
 def to_pil(data: np.ndarray) -> Image.Image:
     """Convert rasterio (bands, H, W) uint8 array to PIL Image."""
     if data.shape[0] == 1:
@@ -110,7 +83,7 @@ def to_pil(data: np.ndarray) -> Image.Image:
 
 
 def patchify(sheet_id: str, require_mask: bool, repo_root: Path):
-    cfg = load_config(repo_root)
+    cfg = load_config()
     pc = cfg["patchify"]
     size, overlap, min_cov, pad = (
         int(pc["patch_size"]),
@@ -148,7 +121,7 @@ def patchify(sheet_id: str, require_mask: bool, repo_root: Path):
         # Units guard: the pipeline's thresholds (simplify_tolerance, min_length,
         # min_area, the parcel size cap) are LINEAR CRS UNITS. In a projected CRS
         # (BNG, UTM, Irish Grid, ...) those are metres and work as intended. In a
-        # geographic CRS they are DEGREES, so "5" would mean 5° (~500 km) — every
+        # geographic CRS they are DEGREES, so "5" would mean 5 deg (~500 km) - every
         # threshold would be meaningless. Reproject to a projected metre CRS first.
         # (No CRS at all is fine: the ungeoreferenced pixel-coordinate path.)
         if has_georef and src.crs.is_geographic:
@@ -170,7 +143,7 @@ def patchify(sheet_id: str, require_mask: bool, repo_root: Path):
         # so every saved patch is 1- or 3-band.
         n_bands = min(src.count, 3) if src.count == 4 else src.count
 
-        # JPG/PNG have no internal tiling — windowed reads re-decode the whole file
+        # JPG/PNG have no internal tiling - windowed reads re-decode the whole file
         # each time, so read once into memory and slice.  GeoTIFF/VRT stay windowed.
         in_memory = src.driver in ("JPEG", "PNG")
         full_img = src.read(indexes=list(range(1, n_bands + 1))) if in_memory else None

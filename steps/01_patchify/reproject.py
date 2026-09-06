@@ -4,7 +4,7 @@ tiled GeoTIFF, so the rest of the pipeline runs in metres at the training scale.
 
 Why this step exists
 --------------------
-Maps arrive in whatever CRS they were georeferenced in — often WGS84 degrees from
+Maps arrive in whatever CRS they were georeferenced in - often WGS84 degrees from
 GCP warping.  The toolkit's thresholds (simplify_tolerance, min_length, min_area,
 the parcel size cap) are all in metres, and the models were trained on ~0.5 m/px
 BNG scans, so a degree-CRS map at a different pixel scale predicts poorly and its
@@ -18,8 +18,8 @@ Output is written to data/raw/<SHEET>/<SHEET>.tif.  Because find_raw() prefers
 .tif over .vrt/.jpg/.png, patchify then picks the reprojected map automatically;
 the original source files stay in place as provenance.
 
-Ungeoreferenced inputs (a plain JPG/PNG with no CRS) cannot be reprojected — there
-is nothing to reproject FROM — so they are left as-is and patchify handles them in
+Ungeoreferenced inputs (a plain JPG/PNG with no CRS) cannot be reprojected - there
+is nothing to reproject FROM - so they are left as-is and patchify handles them in
 pixel coordinates.
 
 Config (config.yaml, `reproject:`):
@@ -40,14 +40,12 @@ import sys
 from pathlib import Path
 
 import rasterio
-import yaml
 from rasterio.crs import CRS
 from rasterio.warp import Resampling, calculate_default_transform, reproject
 
 ROOT = Path(__file__).resolve().parents[2]
-
-# Raw map formats, in resolution priority (matches patchify.py).
-RAW_EXTENSIONS = (".tif", ".tiff", ".vrt", ".jpg", ".jpeg", ".png")
+sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
+from common import find_raw, load_config   # noqa: E402
 
 _RESAMPLING = {
     "nearest":  Resampling.nearest,
@@ -56,21 +54,6 @@ _RESAMPLING = {
     "lanczos":  Resampling.lanczos,
     "average":  Resampling.average,
 }
-
-
-def load_config() -> dict:
-    p = ROOT / "config.yaml"
-    if not p.exists():
-        sys.exit(f"config.yaml not found at {p}")
-    return yaml.safe_load(p.read_text())
-
-
-def find_raw(raw_root: Path, sheet_id: str) -> Path | None:
-    for ext in RAW_EXTENSIONS:
-        p = raw_root / sheet_id / f"{sheet_id}{ext}"
-        if p.exists():
-            return p
-    return None
 
 
 def main() -> None:
@@ -111,7 +94,7 @@ def main() -> None:
 
         if src.crs is None:
             sys.exit(
-                f"'{src_path.name}' is ungeoreferenced (no CRS) — nothing to reproject.\n"
+                f"'{src_path.name}' is ungeoreferenced (no CRS) - nothing to reproject.\n"
                 "Patchify will process it in pixel coordinates as-is."
             )
 
@@ -119,9 +102,9 @@ def main() -> None:
         print(f"Source CRS : {src.crs.to_string()}  (EPSG:{src_epsg})")
         print(f"Target CRS : {target_crs}  |  {resolution} m/px  |  {method}")
 
-        # Already in the target CRS as a GeoTIFF — leave it unless forced.
+        # Already in the target CRS as a GeoTIFF - leave it unless forced.
         if src_epsg is not None and src_epsg == target_epsg and src.driver == "GTiff" and not args.force:
-            print(f"Already {target_crs} GeoTIFF — nothing to do (use --force to re-tile/resample).")
+            print(f"Already {target_crs} GeoTIFF - nothing to do (use --force to re-tile/resample).")
             return
 
         # Refuse to overwrite the source in place (e.g. a non-BNG <sheet>.tif) so the

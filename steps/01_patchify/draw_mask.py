@@ -6,7 +6,7 @@ Click to place polygon vertices that outline the map area; press Enter or
 double-click to close and save the mask.
 
 The polygon is scaled back to full resolution and rendered as a filled
-binary PNG — identical in format to a hand-drawn mask from any other tool.
+binary PNG - identical in format to a hand-drawn mask from any other tool.
 
 Saved to:
     data/map_area_masks/<SHEET_ID>/<SHEET_ID>.png
@@ -34,35 +34,17 @@ import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 import rasterio
-import yaml
 from matplotlib.lines import Line2D
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
+from common import find_raw, load_config   # noqa: E402
 
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-
-def load_config() -> dict:
-    p = ROOT / "config.yaml"
-    if not p.exists():
-        sys.exit(f"config.yaml not found at {p}")
-    return yaml.safe_load(p.read_text())
-
-
-# Raw map formats, in resolution priority (matches patchify.py).
-RAW_EXTENSIONS = (".tif", ".tiff", ".vrt", ".jpg", ".jpeg", ".png")
-
-
-def find_raw(raw_root: Path, sheet_id: str) -> Path | None:
-    """Return data/raw/<sheet>/<sheet>.<ext> for the first supported extension."""
-    for ext in RAW_EXTENSIONS:
-        p = raw_root / sheet_id / f"{sheet_id}{ext}"
-        if p.exists():
-            return p
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -162,11 +144,11 @@ class PolygonDrawer:
     def _on_click(self, event):
         if self.done or event.inaxes is not self.ax:
             return
-        if event.button == 1:          # left-click → add vertex
+        if event.button == 1:          # left-click -> add vertex
             self.xs.append(event.xdata)
             self.ys.append(event.ydata)
             self._update()
-        elif event.button == 3:        # right-click → undo last vertex
+        elif event.button == 3:        # right-click -> undo last vertex
             if self.xs:
                 self.xs.pop()
                 self.ys.pop()
@@ -203,7 +185,7 @@ class PolygonDrawer:
             self._verts.set_data([], [])
             self._clear_fill()
         else:
-            # Close the loop visually if ≥ 3 vertices
+            # Close the loop visually if >= 3 vertices
             xs_loop = self.xs + ([self.xs[0]] if n >= 3 else [])
             ys_loop = self.ys + ([self.ys[0]] if n >= 3 else [])
             self._line.set_data(xs_loop, ys_loop)
@@ -311,10 +293,10 @@ def draw_mask(sheet_id: str, preview_size: int):
     # ------------------------------------------------------------------
     # Load preview
     # ------------------------------------------------------------------
-    print("Loading preview image…")
+    print("Loading preview image...")
     preview, full_w, full_h, scale = load_preview(raw_path, preview_size)
-    print(f"Full size    : {full_w} × {full_h} px")
-    print(f"Preview size : {preview.shape[1]} × {preview.shape[0]} px  "
+    print(f"Full size    : {full_w} x {full_h} px")
+    print(f"Preview size : {preview.shape[1]} x {preview.shape[0]} px  "
           f"(scale = {scale:.4f})\n")
 
     # ------------------------------------------------------------------
@@ -327,15 +309,15 @@ def draw_mask(sheet_id: str, preview_size: int):
         pass   # fall through to whatever backend is available
 
     fig, ax = plt.subplots(figsize=(10, 8))
-    fig.canvas.manager.set_window_title(f"Draw Map-Area Mask — {sheet_id}")
+    fig.canvas.manager.set_window_title(f"Draw Map-Area Mask - {sheet_id}")
     fig.patch.set_facecolor("#1a1a1a")
     ax.set_facecolor("#1a1a1a")
 
     cmap = "gray" if preview.ndim == 2 else None
     ax.imshow(preview, cmap=cmap, interpolation="bilinear", origin="upper")
     ax.set_title(
-        f"{sheet_id}   ({full_w}×{full_h} px, shown at {scale*100:.0f}%)\n"
-        "Outline the MAP AREA — exclude margins, legends, north arrows etc.",
+        f"{sheet_id}   ({full_w}x{full_h} px, shown at {scale*100:.0f}%)\n"
+        "Outline the MAP AREA - exclude margins, legends, north arrows etc.",
         color="white", fontsize=9, pad=6,
     )
     ax.tick_params(colors="gray")
@@ -351,25 +333,25 @@ def draw_mask(sheet_id: str, preview_size: int):
     # ------------------------------------------------------------------
     polygon = drawer.get_polygon()
     if polygon is None:
-        print("Cancelled — no mask saved.")
+        print("Cancelled - no mask saved.")
         sys.exit(0)
 
     print(f"Polygon has {len(polygon)} vertices.")
-    print("Rendering full-resolution mask…")
+    print("Rendering full-resolution mask...")
     mask = render_mask(polygon, scale, full_w, full_h)
 
     # Sanity check: mask must cover at least 1% of image
     coverage = mask.sum() / 255 / (full_w * full_h)
     if coverage < 0.01:
         print(
-            "Warning: mask covers only {:.2f}% of image — polygon may be too small. "
+            "Warning: mask covers only {:.2f}% of image - polygon may be too small. "
             "Re-run to try again.".format(coverage * 100)
         )
 
     out_dir.mkdir(parents=True, exist_ok=True)
     Image.fromarray(mask, mode="L").save(out_path)
 
-    print(f"\nSaved → {out_path}")
+    print(f"\nSaved -> {out_path}")
     print(f"  Map-area coverage: {coverage * 100:.1f}% of image")
     print(
         f"\nNext step: slice the sheet into patches using this mask\n"
