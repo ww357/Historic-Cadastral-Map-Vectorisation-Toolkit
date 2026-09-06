@@ -7,25 +7,25 @@ steps/02_annotate/export_masks.py, because the training target here is a
 continuous distance-transform heatmap (which is what lets the model bridge
 small ink gaps between dashes), not a binary mask. Run this INSTEAD of (not
 in addition to, though it's harmless either way) export_masks.py for the
-"dashed" label — export_masks.py is still needed for any other labels
+"dashed" label - export_masks.py is still needed for any other labels
 (boundary, water, ...) drawn in the same sheet.
 
 Reads (per sheet):
-    data/patches/images/<SHEET_ID>/*.png                 — 512px patches (step 01)
-    data/annotations/labelme_json/<SHEET_ID>/*.json      — labelme output (step 02)
+    data/patches/images/<SHEET_ID>/*.png                 - 512px patches (step 01)
+    data/annotations/labelme_json/<SHEET_ID>/*.json      - labelme output (step 02)
 
 For every patch that has a saved JSON (i.e. was reviewed by the annotator,
 whether or not they drew a "dashed" shape), writes:
-    data/annotations/dashed/<SHEET_ID>/masks/<patch_id>.png      — binary mask
+    data/annotations/dashed/<SHEET_ID>/masks/<patch_id>.png      - binary mask
                                                                     (also makes Patch_Grid
                                                                     pick up ann_dashed, same
                                                                     convention as other labels)
-    data/annotations/dashed/<SHEET_ID>/gaussian/<patch_id>.npy   — float32 heatmap, the
+    data/annotations/dashed/<SHEET_ID>/gaussian/<patch_id>.npy   - float32 heatmap, the
                                                                     actual training target
-    data/annotations/dashed/<SHEET_ID>/gaussian/<patch_id>_preview.png  — visual check
+    data/annotations/dashed/<SHEET_ID>/gaussian/<patch_id>_preview.png  - visual check
 
 Patches whose JSON has no "dashed" shape are written as all-zero (mask and
-heatmap) — a confirmed-negative example, NOT an unreviewed one, since a JSON
+heatmap) - a confirmed-negative example, NOT an unreviewed one, since a JSON
 only exists if the annotator opened and saved that patch. This is what lets
 the model learn to suppress lines it shouldn't detect, and mirrors how the
 original (pre-integration) model was trained. Patches with no JSON at all
@@ -45,19 +45,13 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-import yaml
 from scipy.ndimage import distance_transform_edt
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
+from common import load_config   # noqa: E402
 
 LABEL = "dashed"
-
-
-def load_config() -> dict:
-    p = ROOT / "config.yaml"
-    if not p.exists():
-        sys.exit(f"config.yaml not found at {p}")
-    return yaml.safe_load(p.read_text())
 
 
 def shapes_to_binary_mask(shapes: list, h: int, w: int, line_width: int) -> np.ndarray:
@@ -90,12 +84,12 @@ def process_sheet(sheet_id: str, cfg: dict) -> int:
     heat_out = out_base / "gaussian"
 
     if not json_dir.exists():
-        print(f"  {sheet_id}: no labelme JSON found at {json_dir} — skipping")
+        print(f"  {sheet_id}: no labelme JSON found at {json_dir} - skipping")
         return 0
 
     json_files = sorted(json_dir.glob("*.json"))
     if not json_files:
-        print(f"  {sheet_id}: no annotated patches — skipping")
+        print(f"  {sheet_id}: no annotated patches - skipping")
         return 0
 
     mask_out.mkdir(parents=True, exist_ok=True)
@@ -142,7 +136,7 @@ def main():
     else:
         labelme_root = ROOT / cfg["paths"]["annotations"] / "labelme_json"
         if not labelme_root.exists():
-            sys.exit(f"No annotations found at {labelme_root} — run annotate.py first.")
+            sys.exit(f"No annotations found at {labelme_root} - run annotate.py first.")
         sheets = sorted(p.name for p in labelme_root.iterdir() if p.is_dir())
 
     if not sheets:

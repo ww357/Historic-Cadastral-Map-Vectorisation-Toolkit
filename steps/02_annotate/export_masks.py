@@ -1,17 +1,17 @@
 """
 Convert labelme JSON annotations to binary mask PNGs, sorted by feature class.
 
-Every unique label drawn in labelme automatically becomes its own feature class —
+Every unique label drawn in labelme automatically becomes its own feature class -
 there is no hardcoded list of allowed labels.  The label name is used directly as
-the output folder name (e.g. label "water" → annotations/water/).
+the output folder name (e.g. label "water" -> annotations/water/).
 
 One exception: shapes labelled "boundary" (or whatever annotation.boundary_label
 is set to in config.yaml) are rendered as linesteps at the configured line width
 instead of filled polygons, because boundaries are linestrip annotations.
 
 Reads   : data/annotations/labelme_json/<SHEET_ID>/*.json
-Writes  : data/annotations/<label>/<SHEET_ID>/images/*.png  — patch image copy
-          data/annotations/<label>/<SHEET_ID>/masks/*.png   — binary mask
+Writes  : data/annotations/<label>/<SHEET_ID>/images/*.png  - patch image copy
+          data/annotations/<label>/<SHEET_ID>/masks/*.png   - binary mask
 
 Patches annotated with multiple labels produce a mask file in each relevant folder.
 Patches with no shapes for a given label are skipped for that label.
@@ -29,17 +29,11 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-import yaml
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def load_config() -> dict:
-    p = ROOT / "config.yaml"
-    if not p.exists():
-        sys.exit(f"config.yaml not found at {p}")
-    return yaml.safe_load(p.read_text())
+sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
+from common import load_config   # noqa: E402
 
 
 def render_mask(shapes: list, size: tuple[int, int],
@@ -93,7 +87,7 @@ def export_masks(sheet_id: str, line_width_override: int | None,
         patches_dir = ROOT / cfg["paths"]["patches"] / "images" / sheet_id
 
     if not json_dir.exists():
-        sys.exit(f"No annotations found at {json_dir}  — run annotate.py / labelme first.")
+        sys.exit(f"No annotations found at {json_dir}  - run annotate.py / labelme first.")
     if not patches_dir.exists():
         sys.exit(f"Patches not found: {patches_dir}")
 
@@ -121,7 +115,7 @@ def export_masks(sheet_id: str, line_width_override: int | None,
         img_w     = data.get("imageWidth",  512)
         img_h     = data.get("imageHeight", 512)
 
-        # Group shapes by their label — every unique label is its own class
+        # Group shapes by their label - every unique label is its own class
         label_shapes: dict[str, list] = defaultdict(list)
         for shape in shapes:
             label = shape.get("label", "").strip()

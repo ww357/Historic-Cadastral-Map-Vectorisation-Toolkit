@@ -3,7 +3,7 @@ Train the DashedLineUNet on Gaussian heatmap targets, pooled across every
 annotated sheet.
 
 Unlike the boundary U-Net (steps/03_finetune/lines/train.py), this is not a
-per-sheet fine-tune of a pre-existing base model — it IS the base model
+per-sheet fine-tune of a pre-existing base model - it IS the base model
 training. The annotated "dashed" dataset is small (order of a hundred
 patches) and spans multiple sheets, and pooling across sheets is what was
 actually validated to work; a per-sheet working/iterative two-track split
@@ -11,20 +11,20 @@ actually validated to work; a per-sheet working/iterative two-track split
 have been annotated to make sheet-specific fine-tuning worthwhile.
 
 Two-phase training:
-  Phase 1 — encoder frozen, decoder trained alone.
-  Phase 2 — partial unfreeze from dashed.unfreeze_from_layer up, lower LR.
-            (NOT a full unfreeze — see models/DashedLineUNet/architecture.py
+  Phase 1 - encoder frozen, decoder trained alone.
+  Phase 2 - partial unfreeze from dashed.unfreeze_from_layer up, lower LR.
+            (NOT a full unfreeze - see models/DashedLineUNet/architecture.py
             for why that destabilised training on this dataset size.)
 
 Data expected
 -------------
-    data/patches/images/<SHEET_ID>/*.png                    — from step 01_patchify
-    data/annotations/dashed/<SHEET_ID>/gaussian/*.npy        — from gaussian_masks.py
+    data/patches/images/<SHEET_ID>/*.png                    - from step 01_patchify
+    data/annotations/dashed/<SHEET_ID>/gaussian/*.npy        - from gaussian_masks.py
                                                                 (run automatically if missing)
 
 Outputs
 -------
-    models/base/dashed/best.weights.h5    — base weights (auto-selected by predict.py)
+    models/base/dashed/best.weights.h5    - base weights (auto-selected by predict.py)
     models/logs/dashed_pretrain_metrics.csv
     models/logs/dashed_training_curves.png
 
@@ -41,12 +41,13 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import yaml
 from PIL import Image
 from sklearn.model_selection import train_test_split
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
+from common import load_config   # noqa: E402
 
 from models.DashedLineUNet.architecture import (
     build_unet, preprocess_image, make_combined_loss, line_iou, unfreeze_from,
@@ -63,15 +64,8 @@ except ImportError:
     print("  Install with:  pip install albumentations")
 
 
-def load_config() -> dict:
-    p = ROOT / "config.yaml"
-    if not p.exists():
-        sys.exit(f"config.yaml not found at {p}")
-    return yaml.safe_load(p.read_text())
-
-
 # ---------------------------------------------------------------------------
-# Data loading — pooled across every sheet with dashed annotations
+# Data loading - pooled across every sheet with dashed annotations
 # ---------------------------------------------------------------------------
 
 def collect_pairs(cfg: dict) -> list[tuple[Path, Path]]:
@@ -187,7 +181,7 @@ def main():
             check=False,
         )
         if result.returncode != 0:
-            sys.exit("gaussian_masks.py failed — check your annotations and try again.")
+            sys.exit("gaussian_masks.py failed - check your annotations and try again.")
         pairs = collect_pairs(cfg)
     if not pairs:
         sys.exit(

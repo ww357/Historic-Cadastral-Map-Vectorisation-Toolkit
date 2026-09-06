@@ -8,7 +8,7 @@ Weight search order (starting weights):
 
 Output weights are saved to models/finetuned/working/<SHEET_ID>_best.weights.h5
 and overwrite any previous fine-tune for that sheet.  These working weights are
-sheet-specific and temporary — they exist to produce the best possible predictions
+sheet-specific and temporary - they exist to produce the best possible predictions
 for this sheet.  Step 07 feedback fine-tuning starts from the iterative/ weights,
 not from these.
 
@@ -25,8 +25,8 @@ Data expected
 
 Outputs
 -------
-    models/finetuned/working/<SHEET_ID>_best.weights.h5   — best weights by path_f1
-    models/logs/<SHEET_ID>_finetune_metrics.csv           — per-epoch metrics
+    models/finetuned/working/<SHEET_ID>_best.weights.h5   - best weights by path_f1
+    models/logs/<SHEET_ID>_finetune_metrics.csv           - per-epoch metrics
 """
 
 import argparse
@@ -136,7 +136,7 @@ class PathMetricsCallback(tf.keras.callbacks.Callback):
             )
             per_tile.append(m)
 
-        # Aggregate — F1/recall/precision as mean; APL as sum (additive)
+        # Aggregate - F1/recall/precision as mean; APL as sum (additive)
         path_f1   = float(np.mean([m["path_f1"]        for m in per_tile]))
         path_rec  = float(np.mean([m["path_recall"]    for m in per_tile]))
         path_prec = float(np.mean([m["path_precision"] for m in per_tile]))
@@ -149,19 +149,19 @@ class PathMetricsCallback(tf.keras.callbacks.Callback):
         print(f"\n  Path-F1: {path_f1:.4f}  "
               f"(R={path_rec:.3f}  P={path_prec:.3f})  "
               f"APL: {apl_total:.0f}px  "
-              f"Est. mending: {est_time:.1f} min  (relative only, R²=0.317)")
+              f"Est. mending: {est_time:.1f} min  (relative only, R2=0.317)")
 
         # Checkpoint + early stopping
         if path_f1 > self.best_f1:
             self.best_f1    = path_f1
             self._no_improve = 0
             self.model.save_weights(str(self.best_weights_path))
-            print(f"  ✓ New best path_f1={path_f1:.4f} — weights saved")
+            print(f"  New best path_f1={path_f1:.4f} - weights saved")
         else:
             self._no_improve += 1
             print(f"  No improvement ({self._no_improve}/{self.patience})")
             if self._no_improve >= self.patience:
-                print(f"  Early stopping triggered — best path_f1={self.best_f1:.4f}")
+                print(f"  Early stopping triggered - best path_f1={self.best_f1:.4f}")
                 self.model.stop_training = True
 
         # Log
@@ -210,7 +210,7 @@ def main():
             check=False,
         )
         if result.returncode != 0:
-            sys.exit("export_masks.py failed — check your annotations and try again.")
+            sys.exit("export_masks.py failed - check your annotations and try again.")
         print()
 
     working_dir   = ROOT / paths_cfg["models_finetuned"] / "working"
@@ -233,7 +233,7 @@ def main():
             "Check paths.patches and paths.annotations in config.yaml."
         )
 
-    # Split by patch name — all tiles from a patch stay in the same split
+    # Split by patch name - all tiles from a patch stay in the same split
     patch_names = sorted({r["patch_name"] for r in all_records})
     rng = np.random.default_rng(42)
     rng.shuffle(patch_names)
@@ -244,7 +244,7 @@ def main():
     train_records = [r for r in all_records if r["patch_name"] in train_set]
     val_records   = [r for r in all_records if r["patch_name"] in val_set]
 
-    print(f"  {len(patch_names)} patches → "
+    print(f"  {len(patch_names)} patches -> "
           f"{len(train_records)} train tiles / {len(val_records)} val tiles")
 
     X_train = np.stack([r["img_tile"]  for r in train_records])[..., np.newaxis]
@@ -291,7 +291,7 @@ def main():
         source = "iterative" if "iterative" in p.parts else "base"
         print(f"Starting weights [{source}]: {p.name}")
     else:
-        print("No starting weights found — training from scratch")
+        print("No starting weights found - training from scratch")
         print(f"  Searched: {iterative_dir}  (feedback_v*_best.weights.h5)")
         print(f"  Searched: {ROOT / paths_cfg['models_base']}  (*.weights.h5)")
         print("  Pass --weights <path> to specify a file explicitly.")
@@ -324,8 +324,8 @@ def main():
     ]
 
     # ---- Train -------------------------------------------------------------
-    print(f"\nBest weights → {best_path.relative_to(ROOT)}")
-    print(f"Metrics log  → {log_path.relative_to(ROOT)}\n")
+    print(f"\nBest weights -> {best_path.relative_to(ROOT)}")
+    print(f"Metrics log  -> {log_path.relative_to(ROOT)}\n")
 
     model.fit(
         train_ds,
@@ -335,7 +335,7 @@ def main():
     )
 
     print(f"\nDone. Best path_f1={callbacks[0].best_f1:.4f}")
-    print(f"Weights saved → {best_path.relative_to(ROOT)}")
+    print(f"Weights saved -> {best_path.relative_to(ROOT)}")
     print(
         f"\nNext step: run prediction then mend in QGIS, then run step 06 feedback:\n"
         f"  python steps/04_predict/lines/predict.py --sheet {args.sheet}\n"

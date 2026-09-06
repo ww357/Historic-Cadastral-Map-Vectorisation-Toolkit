@@ -18,7 +18,7 @@ Output
   models/finetuned/iterative/evaluation_results.csv
 
 Note on Est. Mending Time
-  Uses log-linear fit: mending_time = 0.3421 * APL^0.647   R²=0.317
+  Uses log-linear fit: mending_time = 0.3421 * APL^0.647   R2=0.317
   Reliable for ranking models against each other; too uncertain for scheduling.
 """
 
@@ -49,8 +49,8 @@ def load_eval_tiles(patches_root: Path, masks_root: Path, tile_size: int):
     Find all paired (patch, mask) PNGs across all sheet subdirectories and
     split each 512px pair into tile_size tiles.
 
-    patches_root : data/patches/images/          — walks <sheet>/<patch>.png
-    masks_root   : data/annotations/<label>/     — walks <sheet>/masks/<patch>.png
+    patches_root : data/patches/images/          - walks <sheet>/<patch>.png
+    masks_root   : data/annotations/<label>/     - walks <sheet>/masks/<patch>.png
     """
     mask_lookup = {p.stem: p for p in masks_root.rglob("masks/*.png")}
 
@@ -122,7 +122,7 @@ def print_table(results: list[dict]):
         row = [str(r[c]) for c in cols]
         print("  ".join(v.ljust(w) for v, w in zip(row, widths)))
     print(sep)
-    print("\nNote: Est.Time uses log-linear fit (R²=0.317) — use for model ranking only.\n")
+    print("\nNote: Est.Time uses log-linear fit (R2=0.317) - use for model ranking only.\n")
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +153,7 @@ def main():
 
     iterative_dir = ROOT / paths_cfg["models_finetuned"] / "iterative"
 
-    # Collect weight files — iterative/ by default, or explicit override
+    # Collect weight files - iterative/ by default, or explicit override
     if args.weights_dir:
         search_dir = ROOT / args.weights_dir
     else:
@@ -174,7 +174,7 @@ def main():
 
     print(f"Evaluating {len(weight_files)} weight file(s) from {search_dir.relative_to(ROOT)}")
 
-    # Load eval tiles — walks all sheet subdirectories
+    # Load eval tiles - walks all sheet subdirectories
     print("Loading evaluation tiles...")
     tiles = load_eval_tiles(patches_dir, masks_dir, tile_size)
     if not tiles:
@@ -200,7 +200,7 @@ def main():
                                  tau       = ft_cfg["apl_tau"])
             results.append(r)
         except Exception as e:
-            print(f"    ✗ Skipped: {e}")
+            print(f"    Skipped: {e}")
 
     if not results:
         sys.exit("All weight files failed evaluation.")

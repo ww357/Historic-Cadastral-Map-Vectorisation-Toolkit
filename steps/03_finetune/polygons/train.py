@@ -1,12 +1,12 @@
 """
 Fine-tune MapSAM DoRA weights on pipeline-annotated patches.
 
-Designed for small datasets (5–15 patches) on a laptop GPU (~4 GB).
-Adapts the DoRA Q/V projections only — the SAM backbone stays frozen,
+Designed for small datasets (5-15 patches) on a laptop GPU (~4 GB).
+Adapts the DoRA Q/V projections only - the SAM backbone stays frozen,
 keeping memory use and training time low.
 
 The --feature argument accepts any label name used during annotation in labelme.
-No feature list needs to be defined in config.yaml — annotation data is read
+No feature list needs to be defined in config.yaml - annotation data is read
 directly from data/annotations/<feature>/<sheet>/.
 
 Usage
@@ -17,19 +17,19 @@ Usage
 Weight search order (when --weights is not given):
     1. models/finetuned/mapsam_<feature>*_best.pth  (most recent fine-tuned)
     2. models/base/MapSAM/<feature>/                (feature-specific base DoRA weights)
-    3. none found → train from fresh DoRA adapters on the frozen SAM backbone.
+    3. none found -> train from fresh DoRA adapters on the frozen SAM backbone.
        This is the normal path for a brand-new feature with no prior weights.
        (The plain SAM checkpoint original_weights/sam_vit_b_01ec64.pth is NOT a
-       DoRA fallback — it is loaded separately as the backbone; using it as DoRA
+       DoRA fallback - it is loaded separately as the backbone; using it as DoRA
        weights KeyErrors because it has no adapter keys.)
 
 Data (from step 02_annotate/export_masks.py)
-    data/annotations/<feature>/<sheet>/images/*.png  — RGB patch copies
-    data/annotations/<feature>/<sheet>/masks/*.png   — binary masks (0/255)
+    data/annotations/<feature>/<sheet>/images/*.png  - RGB patch copies
+    data/annotations/<feature>/<sheet>/masks/*.png   - binary masks (0/255)
 
 Outputs
-    models/finetuned/mapsam_<feature>_<name>_best.pth  — best checkpoint by val IoU
-    models/logs/mapsam_<feature>_<name>_metrics.csv    — per-epoch loss + IoU
+    models/finetuned/mapsam_<feature>_<name>_best.pth  - best checkpoint by val IoU
+    models/logs/mapsam_<feature>_<name>_metrics.csv    - per-epoch loss + IoU
 """
 
 from __future__ import annotations
@@ -58,23 +58,11 @@ ROOT       = Path(__file__).resolve().parents[3]
 MAPSAM_DIR = ROOT / "models" / "MapSAM"
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(MAPSAM_DIR))
+sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
+from common import tensor_from_numpy   # noqa: E402
 
 from sam_dora_image_encoder import DoRA_Sam      # noqa: E402
 from segment_anything import sam_model_registry  # noqa: E402
-
-
-def _tensor_from_numpy(arr: np.ndarray) -> torch.Tensor:
-    """torch.from_numpy replacement compatible with NumPy 2.x.
-
-    torch.from_numpy checks the C-level numpy.ndarray type, which changed in
-    NumPy 2.0, so it fails with "expected np.ndarray (got numpy.ndarray)" when
-    PyTorch was compiled against NumPy 1.x. Routing through memoryview /
-    torch.frombuffer bypasses that type check regardless of NumPy version.
-    """
-    arr = np.ascontiguousarray(arr)
-    return (torch.frombuffer(memoryview(arr), dtype=torch.float32)
-                 .reshape(arr.shape)
-                 .clone())
 
 
 # ---------------------------------------------------------------------------
@@ -84,8 +72,8 @@ def _tensor_from_numpy(arr: np.ndarray) -> torch.Tensor:
 class _Augment:
     """
     Matches the original MapSAM training augmentation:
-    rot90 + flip OR small rotation (±20°), with optional resize.
-    Also produces the 128×128 low_res_label for the intermediate loss term.
+    rot90 + flip OR small rotation (+/-20 deg), with optional resize.
+    Also produces the 128x128 low_res_label for the intermediate loss term.
     """
     def __init__(self, img_size: int, low_res: int):
         self.img_size = img_size
@@ -114,9 +102,9 @@ class _Augment:
         low_res_m = zoom(mask, (self.low_res / lh, self.low_res / lw), order=0)
 
         return (
-            _tensor_from_numpy(image.astype(np.float32)),
-            _tensor_from_numpy(mask.astype(np.float32)).long(),
-            _tensor_from_numpy(low_res_m.astype(np.float32)).long(),
+            tensor_from_numpy(image.astype(np.float32)),
+            tensor_from_numpy(mask.astype(np.float32)).long(),
+            tensor_from_numpy(low_res_m.astype(np.float32)).long(),
         )
 
 
@@ -127,8 +115,8 @@ class _Augment:
 class PipelineDataset(Dataset):
     """
     Loads (image, mask) pairs from the pipeline annotation export structure:
-        images_dir/<patch>.png  — grayscale or RGB patch
-        masks_dir/<patch>.png   — binary mask (0 or 255)
+        images_dir/<patch>.png  - grayscale or RGB patch
+        masks_dir/<patch>.png   - binary mask (0 or 255)
 
     Accepts a list of (img_path, mask_path) Path tuples so train/val
     splitting by patch name is handled externally.
@@ -146,7 +134,7 @@ class PipelineDataset(Dataset):
         img = cv2.imread(str(img_path), cv2.IMREAD_UNCHANGED)
         if img is None:
             raise FileNotFoundError(f"Image not found: {img_path}")
-        # SAM expects 3-channel RGB — convert grayscale patches if necessary
+        # SAM expects 3-channel RGB - convert grayscale patches if necessary
         if img.ndim == 2:
             img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
         elif img.shape[2] == 4:
@@ -233,11 +221,11 @@ def _resolve_weights(args_weights, feature: str, finetuned_dir: Path,
       2. Most recent mapsam_<feature>*_best.pth in models/finetuned/
       3. Most recent *.pth in models/base/MapSAM/<feature>/   (feature-specific base)
 
-    Returns None when nothing is found — a brand-new feature (e.g. 'orchard')
+    Returns None when nothing is found - a brand-new feature (e.g. 'orchard')
     has no DoRA weights yet, which is a valid state: main() then trains from the
     freshly-initialised DoRA adapters that DoRA_Sam() already builds on top of
     the frozen SAM backbone. The plain SAM checkpoint in original_weights/
-    (sam_vit_b_01ec64.pth) is deliberately NOT a fallback here — it has no DoRA
+    (sam_vit_b_01ec64.pth) is deliberately NOT a fallback here - it has no DoRA
     keys, so load_dora_parameters() would KeyError on 'image_encoder.blocks.
     0.attn.qkv.m_q'. It is loaded separately as the backbone via sam_model_registry.
     """
@@ -264,7 +252,7 @@ def _resolve_weights(args_weights, feature: str, finetuned_dir: Path,
         if candidates:
             return str(candidates[-1])
 
-    # 3. Nothing found — new feature. Train from fresh DoRA adapters.
+    # 3. Nothing found - new feature. Train from fresh DoRA adapters.
     return None
 
 
@@ -277,10 +265,10 @@ def main():
     parser.add_argument("--sheet",   required=True,
                         help="Map sheet name (subdirectory under annotations/)")
     parser.add_argument("--feature", required=True,
-                        help="Feature class — any label used in labelme annotations "
+                        help="Feature class - any label used in labelme annotations "
                              "(e.g. water, building, vegetation)")
     parser.add_argument("--name",    default=None,
-                        help="Run name — prefix for checkpoint and log files")
+                        help="Run name - prefix for checkpoint and log files")
     parser.add_argument("--config",  default="config.yaml")
     parser.add_argument("--weights", default=None,
                         help="DoRA .pth file to fine-tune from (auto-selects if omitted)")
@@ -292,7 +280,7 @@ def main():
     paths  = cfg["paths"]
 
     # Annotation data lives directly under annotations/<feature>/<sheet>/
-    # — no per-feature config entry needed
+    # - no per-feature config entry needed
     images_dir = ROOT / paths["annotations"] / args.feature / args.sheet / "images"
     masks_dir  = ROOT / paths["annotations"] / args.feature / args.sheet / "masks"
 
@@ -306,7 +294,7 @@ def main():
             check=False,
         )
         if result.returncode != 0:
-            sys.exit("export_masks.py failed — check annotations and try again.")
+            sys.exit("export_masks.py failed - check annotations and try again.")
         print()
 
     finetuned_dir   = ROOT / paths["models_finetuned"]
@@ -321,7 +309,7 @@ def main():
     if dora_weights:
         print(f"Base weights : {Path(dora_weights).name}")
     else:
-        print(f"Base weights : none found for '{args.feature}' — "
+        print(f"Base weights : none found for '{args.feature}' - "
               "training from fresh DoRA adapters (frozen SAM backbone)")
 
     run_name = args.name or datetime.now().strftime(f"mapsam_{args.feature}_%Y%m%d_%H%M")
@@ -376,7 +364,7 @@ def main():
 
     train_pairs = [p for p in all_pairs if p[0].stem not in val_set]
     val_pairs   = [p for p in all_pairs if p[0].stem in val_set]
-    print(f"Patches      : {len(all_pairs)} total → {len(train_pairs)} train / {len(val_pairs)} val")
+    print(f"Patches      : {len(all_pairs)} total -> {len(train_pairs)} train / {len(val_pairs)} val")
 
     train_ds = PipelineDataset(train_pairs, mcfg["img_size"], low_res)
     val_ds   = PipelineDataset(val_pairs,   mcfg["img_size"], low_res)
@@ -399,8 +387,8 @@ def main():
 
     # ---- Training loop -------------------------------------------------------
     print(f"\nRun          : {run_name}")
-    print(f"Best weights → {best_path.relative_to(ROOT)}")
-    print(f"Metrics log  → {log_path.relative_to(ROOT)}\n")
+    print(f"Best weights -> {best_path.relative_to(ROOT)}")
+    print(f"Metrics log  -> {log_path.relative_to(ROOT)}\n")
 
     with open(log_path, "w", newline="") as f:
         csv.writer(f).writerow(["epoch", "train_loss", "val_iou"])
@@ -445,12 +433,12 @@ def main():
             best_iou   = val_iou
             no_improve = 0
             net.save_dora_parameters(str(best_path))
-            print(f"  ✓ New best val_IoU={val_iou:.4f} — weights saved")
+            print(f"  New best val_IoU={val_iou:.4f} - weights saved")
         else:
             no_improve += 1
             print(f"  No improvement ({no_improve}/{patience})")
             if no_improve >= patience:
-                print(f"  Early stopping — best val_IoU={best_iou:.4f}")
+                print(f"  Early stopping - best val_IoU={best_iou:.4f}")
                 break
 
     print(f"\nDone. Best val_IoU={best_iou:.4f}")

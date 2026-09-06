@@ -2,16 +2,16 @@
 Launch labelme to annotate patches from a map sheet.
 
 All feature classes are annotated in a single labelme session:
-  boundary  → linestrip  — land parcel boundary lines
-  water     → polygon    — water features
-  building  → polygon    — building footprints
-  damage    → polygon    — document damage / symbology cover
-  <text>    → polygon    — label = the actual text string
+  boundary  -> linestrip  - land parcel boundary lines
+  water     -> polygon    - water features
+  building  -> polygon    - building footprints
+  damage    -> polygon    - document damage / symbology cover
+  <text>    -> polygon    - label = the actual text string
 
 Annotations are saved as JSON files to:
   data/annotations/labelme_json/<SHEET_ID>/
 
-Run export_masks.py after annotating to convert JSON → binary masks.
+Run export_masks.py after annotating to convert JSON -> binary masks.
 
 Usage:
     python annotate.py --sheet SHEET_ID
@@ -23,16 +23,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def load_config() -> dict:
-    p = ROOT / "config.yaml"
-    if not p.exists():
-        sys.exit(f"config.yaml not found at {p}")
-    return yaml.safe_load(p.read_text())
+sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
+from common import load_config   # noqa: E402
 
 
 def is_wsl() -> bool:
@@ -59,7 +53,7 @@ def annotate(sheet_id: str):
     config_path = Path(__file__).parent / "labelme_config.yaml"
 
     if not patches_dir.exists():
-        sys.exit(f"Patches not found: {patches_dir}  — run 01_patchify first.")
+        sys.exit(f"Patches not found: {patches_dir}  - run 01_patchify first.")
 
     json_dir.mkdir(parents=True, exist_ok=True)
 
@@ -71,7 +65,7 @@ def annotate(sheet_id: str):
         print(f"Resuming   : {len(existing)} patches already annotated")
     print()
     print("In labelme:")
-    print("  Draw linestrip  (boundaries) — Edit > Shortcuts to assign Ctrl+L")
+    print("  Draw linestrip  (boundaries) - Edit > Shortcuts to assign Ctrl+L")
     print("  Draw polygon    (water / building / damage / text)")
     print("  For text polygons, type the actual text as the label.")
     print()
