@@ -32,33 +32,16 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import rasterio
-import yaml
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
+from common import find_raw, load_config   # noqa: E402
 
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-
-def load_config() -> dict:
-    p = ROOT / "config.yaml"
-    if not p.exists():
-        sys.exit(f"config.yaml not found at {p}")
-    return yaml.safe_load(p.read_text())
-
-
-# Raw map formats, in resolution priority (matches patchify.py).
-RAW_EXTENSIONS = (".tif", ".tiff", ".vrt", ".jpg", ".jpeg", ".png")
-
-
-def find_raw(raw_root: Path, sheet_id: str) -> Path | None:
-    for ext in RAW_EXTENSIONS:
-        p = raw_root / sheet_id / f"{sheet_id}{ext}"
-        if p.exists():
-            return p
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +83,7 @@ def resolve_weights(weights_arg: str | None, repo_root: Path, paths_cfg: dict) -
 
 
 # ---------------------------------------------------------------------------
-# DataFrame construction  (our CSV format → MapReader format)
+# DataFrame construction  (our CSV format -> MapReader format)
 # ---------------------------------------------------------------------------
 
 def build_patch_df(meta: pd.DataFrame, patches_dir: Path) -> tuple[pd.DataFrame, int]:
@@ -110,7 +93,7 @@ def build_patch_df(meta: pd.DataFrame, patches_dir: Path) -> tuple[pd.DataFrame,
     MapReader patch_df requires:
       index       : image filename  (e.g. "Timberscombe_r0003_c0006.png")
       image_path  : absolute path to patch PNG
-      parent_id   : sheet ID — links to parent_df index
+      parent_id   : sheet ID - links to parent_df index
       pixel_bounds: (col_off, row_off, col_off+patch_w, row_off+patch_h)
                     i.e. (min_x, min_y, max_x, max_y) in parent pixel space
     """
@@ -166,11 +149,11 @@ def build_parent_df(
     if raw_path is not None and raw_path.exists():
         with rasterio.open(raw_path) as src:
             img_w, img_h = src.width, src.height
-            # Read georef directly from the raw map — never from meta.iloc[0].
+            # Read georef directly from the raw map - never from meta.iloc[0].
             # When --mask is used, the first CSV row is the first patch that
             # passed the mask filter, which may be far from pixel (0, 0).
             # Using its tf_c/tf_f as the image origin introduces a systematic
-            # coordinate offset equal to that patch's pixel position × pixel size.
+            # coordinate offset equal to that patch's pixel position x pixel size.
             if src.crs is not None:
                 has_georef = True
                 base_tf = src.transform
@@ -183,7 +166,7 @@ def build_parent_df(
                 has_georef = False
                 crs_str    = None
     else:
-        # Raw TIF unavailable — reconstruct origin from any patch's stored
+        # Raw TIF unavailable - reconstruct origin from any patch's stored
         # transform by back-calculating to pixel (0, 0).
         img_w = int((meta["col_off"] + meta["patch_w"]).max())
         img_h = int((meta["row_off"] + meta["patch_h"]).max())
@@ -198,7 +181,7 @@ def build_parent_df(
         left   = tf_c
         top    = tf_f
         right  = tf_c + img_w * tf_a
-        bottom = tf_f + img_h * tf_e   # tf_e negative → bottom < top
+        bottom = tf_f + img_h * tf_e   # tf_e negative -> bottom < top
         dlon   = tf_a
         dlat   = abs(tf_e)
     else:
@@ -225,7 +208,7 @@ def build_parent_df(
 # ---------------------------------------------------------------------------
 
 def _group_into_tiles(meta: pd.DataFrame, tile_n: int) -> list[pd.DataFrame]:
-    """Group existing patches into tile_n × tile_n grids by grid position."""
+    """Group existing patches into tile_n x tile_n grids by grid position."""
     m = meta.copy()
     m["_tile_row"] = m["grid_row"] // tile_n
     m["_tile_col"] = m["grid_col"] // tile_n
@@ -269,12 +252,12 @@ def build_tile_df(
     pad_value: int = 255,
 ) -> tuple[pd.DataFrame, int, int]:
     """
-    Assemble tile_n × tile_n patch grids into tile PNG files and return a
+    Assemble tile_n x tile_n patch grids into tile PNG files and return a
     patch_df that points to tiles instead of individual patches.
 
     MapReader uses pixel_bounds to map tile predictions back to parent pixel
     coordinates. Because each tile pixel corresponds exactly to one parent
-    pixel (no resampling), the mapping is a simple offset — transparent to
+    pixel (no resampling), the mapping is a simple offset - transparent to
     MapTextRunner regardless of how many patches are in each tile.
 
     Returns:
@@ -327,9 +310,9 @@ def predict(sheet_id: str, repo_root: Path,
     gpkg_path    = outputs_dir / f"{sheet_id}.gpkg"
 
     if not patches_dir.exists():
-        sys.exit(f"Patches not found: {patches_dir}  — run 01_patchify first.")
+        sys.exit(f"Patches not found: {patches_dir}  - run 01_patchify first.")
     if not meta_path.exists():
-        sys.exit(f"Metadata CSV not found: {meta_path}  — run 01_patchify first.")
+        sys.exit(f"Metadata CSV not found: {meta_path}  - run 01_patchify first.")
 
     pred_dir.mkdir(parents=True, exist_ok=True)
     outputs_dir.mkdir(parents=True, exist_ok=True)
@@ -339,10 +322,10 @@ def predict(sheet_id: str, repo_root: Path,
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
-    # Fast-exit: GeoJSON already saved — just need the text vectorise step
+    # Fast-exit: GeoJSON already saved - just need the text vectorise step
     # ------------------------------------------------------------------
     if geojson_path.exists():
-        print(f"GeoJSON already exists — inference and georeferencing are complete.")
+        print(f"GeoJSON already exists - inference and georeferencing are complete.")
         print(f"  {geojson_path.relative_to(repo_root)}")
         print(f"\nTo add the text layer to the GeoPackage:")
         print(f"  conda activate maptools")
@@ -352,11 +335,11 @@ def predict(sheet_id: str, repo_root: Path,
         print(f"  rm {checkpoint_path}")
         return
 
-    # Settings — CLI args override config.yaml
+    # Settings - CLI args override config.yaml
     weights_path  = resolve_weights(weights_arg, repo_root, paths_cfg)
     min_ioa       = float(text_cfg.get("min_ioa", 0.7))
 
-    # Resolve device — never pass "default" to MapTextRunner as it may
+    # Resolve device - never pass "default" to MapTextRunner as it may
     # silently fall back to CPU. Resolve to "cuda" or "cpu" explicitly.
     _device_cfg = device_arg or text_cfg.get("device", "default")
     if _device_cfg == "default":
@@ -375,7 +358,7 @@ def predict(sheet_id: str, repo_root: Path,
     print(f"Sheet    : {sheet_id}")
     print(f"Weights  : {weights_path.relative_to(repo_root)}")
     print(f"Config   : {cfg_file_path.relative_to(repo_root)}")
-    print(f"Device   : {device}{' ⚠ no CUDA found — running on CPU' if device == 'cpu' else ''}")
+    print(f"Device   : {device}{' no CUDA found - running on CPU' if device == 'cpu' else ''}")
     print(f"Min IoA  : {min_ioa}")
     print()
 
@@ -395,7 +378,7 @@ def predict(sheet_id: str, repo_root: Path,
 
     print(f"Patches  : {n_found} images found  ({len(meta) - n_found} in CSV but missing on disk)")
     if not has_georef:
-        print("Warning  : No georeferencing found — output will use pixel coordinates.")
+        print("Warning  : No georeferencing found - output will use pixel coordinates.")
     print()
 
     # ------------------------------------------------------------------
@@ -413,16 +396,16 @@ def predict(sheet_id: str, repo_root: Path,
     # ------------------------------------------------------------------
     # Tile assembly (optional, controlled by text.tile_n in config.yaml)
     # ------------------------------------------------------------------
-    # MIN_SIZE_TEST: 1024 means a 512px patch is upscaled 2× before every
-    # forward pass. Assembling tile_n × tile_n patches into a ~1024px tile
-    # first means one forward pass covers tile_n² patches, giving ~3-4×
+    # MIN_SIZE_TEST: 1024 means a 512px patch is upscaled 2x before every
+    # forward pass. Assembling tile_n x tile_n patches into a ~1024px tile
+    # first means one forward pass covers tile_n2 patches, giving ~3-4x
     # throughput on GPU with no accuracy loss.
     tile_n    = int(text_cfg.get("tile_n", 1))
     pad_value = int(cfg.get("patchify", {}).get("pad_value", 255))
     tiles_dir = pred_dir / "tiles"
 
     if tile_n > 1:
-        print(f"Assembling {tile_n}×{tile_n} patch tiles for inference...")
+        print(f"Assembling {tile_n}x{tile_n} patch tiles for inference...")
         inference_df, n_tiles, n_covered = build_tile_df(
             meta, patches_dir, tiles_dir, tile_n, pad_value
         )
@@ -448,10 +431,10 @@ def predict(sheet_id: str, repo_root: Path,
     # Run inference OR resume from checkpoint
     # Checkpoint is saved immediately after run_all() so a crash in any
     # post-processing step (georeferencing, GeoJSON write) never loses
-    # hours of GPU inference — just re-run the same command to resume.
+    # hours of GPU inference - just re-run the same command to resume.
     # ------------------------------------------------------------------
     if checkpoint_path.exists():
-        print(f"Checkpoint found — skipping inference, loading saved predictions...")
+        print(f"Checkpoint found - skipping inference, loading saved predictions...")
         runner.load_patch_predictions(str(checkpoint_path))
         # load_patch_predictions() auto-calls convert_to_parent_pixel_bounds();
         # call explicitly with our dedup settings to ensure correct parameters.
@@ -470,9 +453,9 @@ def predict(sheet_id: str, repo_root: Path,
         n_patch_preds = sum(len(v) for v in preds_dict.values()) if preds_dict else 0
         print(f"  Patch-level instances: {n_patch_preds}")
 
-        # Save checkpoint immediately — before any post-processing that could fail
+        # Save checkpoint immediately - before any post-processing that could fail
         runner.to_csv(str(checkpoint_path))
-        print(f"  Checkpoint saved → {checkpoint_path.relative_to(repo_root)}")
+        print(f"  Checkpoint saved -> {checkpoint_path.relative_to(repo_root)}")
 
         print("Scaling up to full-sheet coordinates and deduplicating...")
         parent_preds_df = runner.convert_to_parent_pixel_bounds(
@@ -493,26 +476,26 @@ def predict(sheet_id: str, repo_root: Path,
         # gives clean column dtypes and avoids fiona's NULL pointer error.
         runner.convert_to_coords()
         runner.to_geojson(str(geojson_path))
-        print(f"  GeoJSON → {geojson_path.relative_to(repo_root)}")
+        print(f"  GeoJSON -> {geojson_path.relative_to(repo_root)}")
 
         geo_gdf = gpd.read_file(geojson_path)
         print(f"  Georeferenced instances: {len(geo_gdf)}")
     else:
-        # No CRS — save parent pixel bounds as GeoJSON directly
+        # No CRS - save parent pixel bounds as GeoJSON directly
         geo_gdf = parent_preds_df.copy()
         if not isinstance(geo_gdf, gpd.GeoDataFrame):
             geo_gdf = gpd.GeoDataFrame(geo_gdf, crs=None)
         geo_gdf.to_file(geojson_path, driver="GeoJSON")
-        print(f"  GeoJSON (pixel coords) → {geojson_path.relative_to(repo_root)}")
+        print(f"  GeoJSON (pixel coords) -> {geojson_path.relative_to(repo_root)}")
 
     # ------------------------------------------------------------------
     # GeoPackage write is handled by the text vectorise step in the maptools
-    # environment — the polygons env's fiona cannot write GeoPackages reliably.
+    # environment - the polygons env's fiona cannot write GeoPackages reliably.
     # ------------------------------------------------------------------
     if len(geo_gdf) == 0:
         print("\nWarning: no text predictions produced.")
     else:
-        print(f"\nInference complete — {len(geo_gdf):,} text instances saved to GeoJSON.")
+        print(f"\nInference complete - {len(geo_gdf):,} text instances saved to GeoJSON.")
 
     print(f"\nTo add the text layer to the GeoPackage, run in a separate terminal:")
     print(f"  conda activate maptools")

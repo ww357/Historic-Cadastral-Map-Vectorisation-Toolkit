@@ -4,8 +4,8 @@ Run boundary U-Net inference on all patches for a given sheet.
 Reads  : data/patches/images/<SHEET_ID>/*.png       (512px patches)
 Writes : data/predictions/boundaries/<SHEET_ID>/*.png (512px binary masks)
 
-Each 512px patch is split into a 2×2 grid of 256px sub-patches (4 total),
-matching the model's training resolution exactly — no downsampling. Predictions
+Each 512px patch is split into a 2x2 grid of 256px sub-patches (4 total),
+matching the model's training resolution exactly - no downsampling. Predictions
 are reassembled into a 512px output mask aligned with the metadata CSV.
 
 Weight search order:
@@ -25,25 +25,19 @@ from pathlib import Path
 
 import numpy as np
 import tensorflow as tf
-import yaml
 from PIL import Image
 from tqdm import tqdm
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
+from common import load_config   # noqa: E402
 
 from models.ImprovedLinearUNet.architecture import build_model
 
 
-def load_config() -> dict:
-    p = ROOT / "config.yaml"
-    if not p.exists():
-        sys.exit(f"config.yaml not found at {p}")
-    return yaml.safe_load(p.read_text())
-
-
 def split_patch(arr: np.ndarray, sub_size: int) -> tuple[list[np.ndarray], list[tuple]]:
-    """Split a (H, W) array into (H/sub_size × W/sub_size) tiles.
+    """Split a (H, W) array into (H/sub_size x W/sub_size) tiles.
     Returns tiles and their (row_off, col_off) positions for reassembly.
     """
     tiles, positions = [], []
@@ -135,11 +129,11 @@ def predict(sheet_id: str, repo_root: Path, weights_arg: str | None = None):
     weights_path = resolve_weights(weights_arg, sheet_id, repo_root, cfg["paths"])
 
     if not patches_dir.exists():
-        sys.exit(f"Patches not found: {patches_dir}  — run 01_patchify first.")
+        sys.exit(f"Patches not found: {patches_dir}  - run 01_patchify first.")
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Patches that have manual annotations are skipped — the stitch step will
+    # Patches that have manual annotations are skipped - the stitch step will
     # place the annotation mask directly, which is already ground-truth quality.
     boundary_label = cfg["annotation"].get("boundary_label", "boundary")
     ann_mask_dir   = repo_root / cfg["paths"]["annotations"] / boundary_label / sheet_id / "masks"
@@ -155,7 +149,7 @@ def predict(sheet_id: str, repo_root: Path, weights_arg: str | None = None):
         weight_source = "base"
 
     print(f"Sheet    : {sheet_id}")
-    print(f"Strategy : {patch_size}px patch → {n_tiles}×{sub_size}px tiles (no downsampling)")
+    print(f"Strategy : {patch_size}px patch -> {n_tiles}x{sub_size}px tiles (no downsampling)")
     print(f"Threshold: {threshold}  |  loss: {loss_type}")
     print(f"Weights  : {wp}  [{weight_source}]")
     if annotated:
@@ -168,7 +162,7 @@ def predict(sheet_id: str, repo_root: Path, weights_arg: str | None = None):
 
     patch_paths = sorted(patches_dir.glob("*.png"))
     to_predict  = [p for p in patch_paths if p.stem not in annotated]
-    print(f"{len(patch_paths)} total patches  →  {len(to_predict)} to predict")
+    print(f"{len(patch_paths)} total patches  ->  {len(to_predict)} to predict")
 
     failed = 0
     for patch_path in tqdm(to_predict, unit="patch"):
@@ -181,7 +175,7 @@ def predict(sheet_id: str, repo_root: Path, weights_arg: str | None = None):
 
         tiles, positions = split_patch(grey, sub_size)
 
-        # Stack all tiles into one batch — (N, 256, 256, 1), normalised
+        # Stack all tiles into one batch - (N, 256, 256, 1), normalised
         batch = np.stack([t[:, :, None] / 255.0 for t in tiles])
 
         preds = model.predict(batch, verbose=0)  # (N, 256, 256, 1)

@@ -4,7 +4,7 @@ Run DashedLineUNet inference on all patches for a given sheet.
 Reads  : data/patches/images/<SHEET_ID>/*.png            (512px patches)
 Writes : data/predictions/dashed/<SHEET_ID>/*.png        (512px binary masks)
 
-Unlike the boundary U-Net, no 2x2 tiling is needed here — the model's native
+Unlike the boundary U-Net, no 2x2 tiling is needed here - the model's native
 input size (dashed.img_size, 512) already matches the patch size, so each
 patch is a single forward pass.
 
@@ -14,14 +14,14 @@ Weight search order:
 
 Both Keras 3 (*.weights.h5) and Keras 2 (*.h5) weight files are accepted.
 Keras 3 picks its loader from the *filename*, not the file contents, so a
-Keras 2 file must not be named *.weights.h5 — see load_weights_compat().
+Keras 2 file must not be named *.weights.h5 - see load_weights_compat().
 
 (No working/iterative two-track split yet, unlike the boundary lines
-pipeline — the "dashed" model is currently a single pooled cross-sheet model
+pipeline - the "dashed" model is currently a single pooled cross-sheet model
 trained from steps/03_finetune/dashed/train.py. Add a working/ tier here if
 per-sheet fine-tuning is introduced later.)
 
-Patches with an existing "dashed" annotation mask are skipped — the stitch
+Patches with an existing "dashed" annotation mask are skipped - the stitch
 step in vectorise.py uses that ground-truth mask directly instead, same
 convention as the boundary lines pipeline.
 
@@ -38,21 +38,15 @@ from pathlib import Path
 
 import numpy as np
 import tensorflow as tf
-import yaml
 from PIL import Image
 from tqdm import tqdm
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
+from common import load_config   # noqa: E402
 
 from models.DashedLineUNet.architecture import build_unet, preprocess_image
-
-
-def load_config() -> dict:
-    p = ROOT / "config.yaml"
-    if not p.exists():
-        sys.exit(f"config.yaml not found at {p}")
-    return yaml.safe_load(p.read_text())
 
 
 def resolve_weights(weights_arg: str | None, repo_root: Path, paths_cfg: dict) -> Path:
@@ -117,11 +111,11 @@ def predict(sheet_id: str, weights_arg: str | None = None):
     weights_path = resolve_weights(weights_arg, ROOT, cfg["paths"])
 
     if not patches_dir.exists():
-        sys.exit(f"Patches not found: {patches_dir} — run 01_patchify first.")
+        sys.exit(f"Patches not found: {patches_dir} - run 01_patchify first.")
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Patches with a reviewed "dashed" annotation are skipped — vectorise.py's
+    # Patches with a reviewed "dashed" annotation are skipped - vectorise.py's
     # stitch step uses that ground-truth mask directly (see gaussian_masks.py:
     # this includes confirmed-negative patches, not just positive ones).
     ann_mask_dir = ROOT / cfg["paths"]["annotations"] / "dashed" / sheet_id / "masks"
@@ -158,7 +152,7 @@ def predict(sheet_id: str, weights_arg: str | None = None):
 
         if img.shape[0] != img_size or img.shape[1] != img_size:
             print(f"Warning: {patch_path.name} is {img.shape[:2]}, expected "
-                  f"({img_size}, {img_size}) — skipping.")
+                  f"({img_size}, {img_size}) - skipping.")
             failed += 1
             continue
 

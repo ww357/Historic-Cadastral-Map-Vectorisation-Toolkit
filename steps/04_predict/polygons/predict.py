@@ -1,20 +1,20 @@
 """
 Run MapSAM inference on all patches for a given sheet and feature class.
 
-Any feature label used during annotation can be predicted — there is no fixed
+Any feature label used during annotation can be predicted - there is no fixed
 feature list.  Pass --feature with the same label name used in labelme.
 
 Reads  : data/patches/images/<SHEET_ID>/*.png
-Writes : data/predictions/<FEATURE>/<SHEET_ID>/*.png  — 512px binary masks (0/255)
+Writes : data/predictions/<FEATURE>/<SHEET_ID>/*.png  - 512px binary masks (0/255)
 
-MapSAM operates at full 512px resolution.  The model decoder produces 128×128
-low-resolution logits which are upsampled to 512×512 for the output masks.
+MapSAM operates at full 512px resolution.  The model decoder produces 128x128
+low-resolution logits which are upsampled to 512x512 for the output masks.
 
 Weight search order (same as train.py):
     1. --weights CLI argument (explicit override)
     2. models/finetuned/mapsam_<feature>*_best.pth  (most recent fine-tuned)
     3. models/base/MapSAM/<feature>/                (feature-specific base weights)
-    4. models/base/MapSAM/origional_weights/        (generic SAM DoRA fallback)
+    4. models/base/MapSAM/original_weights/        (generic SAM DoRA fallback)
 
 Usage:
     python predict.py --sheet Timberscombe --feature water
@@ -32,23 +32,17 @@ import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
-import yaml
 from tqdm import tqdm
 
 ROOT       = Path(__file__).resolve().parents[3]
 MAPSAM_DIR = ROOT / "models" / "MapSAM"
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(MAPSAM_DIR))
+sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
+from common import load_config   # noqa: E402
 
 from sam_dora_image_encoder import DoRA_Sam      # noqa: E402
 from segment_anything import sam_model_registry  # noqa: E402
-
-
-def load_config() -> dict:
-    p = ROOT / "config.yaml"
-    if not p.exists():
-        sys.exit(f"config.yaml not found at {p}")
-    return yaml.safe_load(p.read_text())
 
 
 def resolve_weights(args_weights, feature: str, finetuned_dir: Path,
@@ -58,7 +52,7 @@ def resolve_weights(args_weights, feature: str, finetuned_dir: Path,
       1. --weights CLI argument (explicit override)
       2. Most recent mapsam_<feature>*_best.pth in models/finetuned/
       3. Most recent *.pth in models/base/MapSAM/<feature>/
-      4. Most recent *.pth in models/base/MapSAM/origional_weights/
+      4. Most recent *.pth in models/base/MapSAM/original_weights/
     """
     if args_weights:
         p = Path(args_weights)
@@ -81,8 +75,8 @@ def resolve_weights(args_weights, feature: str, finetuned_dir: Path,
         if candidates:
             return candidates[-1]
 
-    fallback_dir = mapsam_base_dir / "origional_weights"
-    _SAM_BASE = "sam_vit_b_01ec64.pth"   # plain SAM checkpoint — not DoRA weights
+    fallback_dir = mapsam_base_dir / "original_weights"
+    _SAM_BASE = "sam_vit_b_01ec64.pth"   # plain SAM checkpoint - not DoRA weights
     if fallback_dir.exists():
         candidates = sorted(
             [p for p in fallback_dir.rglob("*.pth") if p.name != _SAM_BASE],
@@ -128,7 +122,7 @@ def run_batch(net, batch_np: list[np.ndarray], img_size: int,
                 .cuda())  # (B, 3, H, W)
     outputs, _ = net(imgs, multimask_output, img_size)
 
-    # low_res_logits: (B, 1, 128, 128) — upsample to full patch resolution
+    # low_res_logits: (B, 1, 128, 128) - upsample to full patch resolution
     logits = outputs['low_res_logits']  # (B, num_masks, 128, 128)
     if logits.shape[1] > 1:
         # Multi-mask mode: take the mask with the highest max logit
@@ -162,9 +156,9 @@ def predict(sheet_id: str, feature: str, weights_arg: str | None,
     mapsam_base_dir = ROOT / paths["models_base"] / "MapSAM"
 
     if not patches_dir.exists():
-        sys.exit(f"Patches not found: {patches_dir}  — run 01_patchify first.")
+        sys.exit(f"Patches not found: {patches_dir}  - run 01_patchify first.")
 
-    # Patches that have manual annotations are skipped — the stitch step will
+    # Patches that have manual annotations are skipped - the stitch step will
     # place the annotation mask directly, which is already ground-truth quality.
     ann_mask_dir = ROOT / paths["annotations"] / feature / sheet_id / "masks"
     annotated    = {p.stem for p in ann_mask_dir.glob("*.png")} if ann_mask_dir.exists() else set()
@@ -182,7 +176,7 @@ def predict(sheet_id: str, feature: str, weights_arg: str | None,
     print()
 
     # ---- Load model -----------------------------------------------------------
-    sam_ckpt = mapsam_base_dir / "origional_weights" / "sam_vit_b_01ec64.pth"
+    sam_ckpt = mapsam_base_dir / "original_weights" / "sam_vit_b_01ec64.pth"
     if not sam_ckpt.exists():
         sys.exit(f"SAM base checkpoint not found: {sam_ckpt}")
 
@@ -201,7 +195,7 @@ def predict(sheet_id: str, feature: str, weights_arg: str | None,
     # ---- Inference ------------------------------------------------------------
     patch_paths = sorted(patches_dir.glob("*.png"))
     to_predict  = [p for p in patch_paths if p.stem not in annotated]
-    print(f"{len(patch_paths)} total patches  →  {len(to_predict)} to predict")
+    print(f"{len(patch_paths)} total patches  ->  {len(to_predict)} to predict")
 
     failed = 0
     buffer: list[tuple[Path, np.ndarray]] = []
@@ -217,7 +211,7 @@ def predict(sheet_id: str, feature: str, weights_arg: str | None,
                 from PIL import Image
                 Image.fromarray(m, mode="L").save(out_dir / p.name)
         except Exception as e:
-            print(f"\nWarning: batch failed — {e}")
+            print(f"\nWarning: batch failed - {e}")
             failed += len(buffer)
         buffer.clear()
 
@@ -277,11 +271,11 @@ if __name__ == "__main__":
     else:
         weights_arg = args.weights
 
-    text_script = Path(__file__).resolve().parents[1] / "text" / "text_predict.py"
+    text_script = Path(__file__).resolve().parents[1] / "text" / "predict.py"
 
     for i, feature in enumerate(features):
         if len(features) > 1:
-            print(f"═══ Feature {i + 1}/{len(features)}: {feature} ═══\n")
+            print(f"=== Feature {i + 1}/{len(features)}: {feature} ===\n")
 
         if feature == "text":
             cmd = [sys.executable, str(text_script), "--sheet", args.sheet]
@@ -303,4 +297,4 @@ if __name__ == "__main__":
               f"--feature {' '.join(mapsam_features)}")
     if "text" in features:
         print(f"  conda activate maptools\n"
-              f"  python steps/05_vectorise/text/text_to_vector.py --sheet {args.sheet}")
+              f"  python steps/05_vectorise/text/vectorise.py --sheet {args.sheet}")

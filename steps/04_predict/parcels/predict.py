@@ -2,23 +2,23 @@
 Point-seeded watershed parcel extraction (replaces point-prompted SAM).
 
 A tithe parcel is a *cell of a planar subdivision* defined by the surrounding
-boundary lines, not an appearance object — which is why SAM (and any
+boundary lines, not an appearance object - which is why SAM (and any
 single-point prompt) could never infer parcel extent.  This script instead
 partitions the whole sheet:
 
-    boundary lines  →  ridges (walls)
-    apportionment centroid points  →  one seed per known parcel
-    marker-controlled watershed     →  every pixel assigned to its parcel
+    boundary lines  ->  ridges (walls)
+    apportionment centroid points  ->  one seed per known parcel
+    marker-controlled watershed     ->  every pixel assigned to its parcel
 
 Because each parcel is pulled out by its own seed, the boundaries do NOT need to
 be topologically closed.  Where two seeded parcels are separated by a dashed or
-broken line, the two flood basins simply meet at the weak ridge between them —
+broken line, the two flood basins simply meet at the weak ridge between them -
 the seeds supply the closure that the ink lacks.  This is the key reason the
 gaps/dashes that defeated strict polygonisation are tolerable here.
 
 What defines parcel extent (configurable):
     Several feature layers can contribute to the "walls" the flood will not
-    cross — not just the solid boundary lines:
+    cross - not just the solid boundary lines:
       * extent_features (--extent): footprints that act as WALLS but stay inside
         parcels.  Solid lines (boundaries), dashed lines, and areal features such
         as building outlines or waterways.  Dashed lines get a softer ridge weight
@@ -27,29 +27,29 @@ What defines parcel extent (configurable):
         (they become holes), for lakes/rivers that belong to no parcel.
 
     Dashed-line pathways: a double dashed line drawn as a track/path is not a
-    parcel border.  It is handled by the seed logic — a path corridor with no
+    parcel border.  It is handled by the seed logic - a path corridor with no
     apportionment seed inside it is flooded by its neighbours rather than split
-    off as its own parcel — plus the softer dashed ridge weight so real solid
+    off as its own parcel - plus the softer dashed ridge weight so real solid
     borders dominate where they coincide.
 
 Recorded-size guidance:
     If the apportionment table records each parcel's area, that is used as a fuzzy
     cap so a parcel does not run away where a border is missing: the nearest-to-
-    seed pixels up to size_factor × recorded area are kept and the overflow is
+    seed pixels up to size_factor x recorded area are kept and the overflow is
     released to unassigned background.  Only parcels over the tolerance are trimmed.
 
 Inputs (all already produced by earlier pipeline steps):
-    data/stitched/<feature>/<sheet>.tif       — full-sheet feature rasters (boundaries, dashed, ...)
-    data/parcel_points/<points_file>          — apportionment centroid points (GeoPackage)
-    data/map_area_masks/<sheet>/<sheet>.png   — optional map-area mask
-    data/mended outputs/<sheet>.gpkg          — optional hand-corrected boundary/dashed line layers
+    data/stitched/<feature>/<sheet>.tif       - full-sheet feature rasters (boundaries, dashed, ...)
+    data/parcel_points/<points_file>          - apportionment centroid points (GeoPackage)
+    data/map_area_masks/<sheet>/<sheet>.png   - optional map-area mask
+    data/mended outputs/<sheet>.gpkg          - optional hand-corrected boundary/dashed line layers
 
 Output (schema matches the old SAM step, so 05_vectorise/parcels works unchanged):
-    data/predictions/parcels/<sheet>/parcel_preds.geojson   — one Polygon per parcel, with rowid
-    data/predictions/parcels/<sheet>/parcel_segment_preview.png  — quick visual check
+    data/predictions/parcels/<sheet>/parcel_preds.geojson   - one Polygon per parcel, with rowid
+    data/predictions/parcels/<sheet>/parcel_segment_preview.png  - quick visual check
 
 Usage:
-    conda activate polygons        # (or lines) — needs scikit-image, scipy, rasterio
+    conda activate polygons        # (or lines) - needs scikit-image, scipy, rasterio
     python steps/04_predict/parcels/predict.py --sheet Timberscombe
     python steps/04_predict/parcels/predict.py --sheet Timberscombe \
         --extent boundaries dashed building --exclude water
@@ -70,11 +70,12 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
+from common import find_raw, load_config   # noqa: E402
 
-# ── PROJ database fix (mirror of the SAM parcel scripts) ───────────────────────
+# -- PROJ database fix (mirror of the SAM parcel scripts) -----------------------
 # pyproj can fail to locate proj.db in pip-installed conda envs.  We never need
 # CRS *resolution* here (coords are read via WKB and the source EPSG is carried
 # through numerically), but rasterio still imports fine; kept for parity/safety.
@@ -105,30 +106,12 @@ except ImportError:
     sys.exit("scikit-image + scipy required:  pip install scikit-image scipy")
 
 try:
-    from shapely import wkb as shapely_wkb   # geometry parsing only — no PROJ/CRS
+    from shapely import wkb as shapely_wkb   # geometry parsing only - no PROJ/CRS
 except ImportError:
     shapely_wkb = None
 
 
-# ── Config ─────────────────────────────────────────────────────────────────────
-
-def load_config() -> dict:
-    p = ROOT / "config.yaml"
-    if not p.exists():
-        sys.exit(f"config.yaml not found: {p}")
-    return yaml.safe_load(p.read_text())
-
-
-# Raw map formats, in resolution priority (matches patchify.py).
-RAW_EXTENSIONS = (".tif", ".tiff", ".vrt", ".jpg", ".jpeg", ".png")
-
-
-def find_raw(raw_root: Path, sheet_id: str) -> Path | None:
-    for ext in RAW_EXTENSIONS:
-        p = raw_root / sheet_id / f"{sheet_id}{ext}"
-        if p.exists():
-            return p
-    return None
+# -- Config ---------------------------------------------------------------------
 
 
 def resolve_points_file(pts_dir: Path, sheet: str, default_name: str) -> Path:
@@ -145,7 +128,7 @@ def resolve_points_file(pts_dir: Path, sheet: str, default_name: str) -> Path:
     return pts_dir / default_name
 
 
-# ── Apportionment points (sqlite3 + WKB — no pyproj/geopandas) ─────────────────
+# -- Apportionment points (sqlite3 + WKB - no pyproj/geopandas) -----------------
 
 def read_gpkg_points_wkb(path: Path) -> list[dict]:
     """
@@ -192,7 +175,7 @@ def read_gpkg_points_wkb(path: Path) -> list[dict]:
     return records
 
 
-# ── Mended boundary GeoPackage → rasterised line network ──────────────────────
+# -- Mended boundary GeoPackage -> rasterised line network ----------------------
 
 def resolve_mended(mended_dir: Path, sheet: str) -> Path | None:
     """Return a hand-corrected boundary GeoPackage for the sheet, or None."""
@@ -256,7 +239,7 @@ def read_gpkg_lines_wkb(path: Path, layer: str = "boundaries") -> list[np.ndarra
 def rasterize_lines(lines: list[np.ndarray], transform: "Affine",
                     H: int, W: int, width: int) -> np.ndarray:
     """Draw world-coordinate polylines onto an (H, W) uint8 canvas (255 = boundary)."""
-    inv = ~transform                       # world → pixel affine
+    inv = ~transform                       # world -> pixel affine
     canvas = np.zeros((H, W), dtype=np.uint8)
     for xy in lines:
         cols = inv.a * xy[:, 0] + inv.b * xy[:, 1] + inv.c
@@ -267,7 +250,7 @@ def rasterize_lines(lines: list[np.ndarray], transform: "Affine",
     return canvas
 
 
-# ── Feature layers (extent barriers + exclusions) ──────────────────────────────
+# -- Feature layers (extent barriers + exclusions) ------------------------------
 
 # 'boundaries'/'dashed' are LINEAR (thin polyline rasters, and can come from a
 # mended GeoPackage line layer); everything else is an AREAL prediction raster.
@@ -313,7 +296,7 @@ def load_feature_binary(feature: str, sheet: str, cfg: dict,
             if lines:
                 return rasterize_lines(lines, transform, H, W, mend_width) > 0
         except ValueError:
-            pass  # layer absent in this mended file — fall through to stitched raster
+            pass  # layer absent in this mended file - fall through to stitched raster
 
     stitched = ROOT / paths["stitched"] / feature / f"{sheet}.tif"
     if not stitched.exists():
@@ -325,7 +308,7 @@ def load_feature_binary(feature: str, sheet: str, cfg: dict,
     return arr > 0
 
 
-# ── Recorded parcel area (fuzzy size cap) ──────────────────────────────────────
+# -- Recorded parcel area (fuzzy size cap) --------------------------------------
 
 _AREA_UNIT_M2 = {
     "acres": 4046.8564224,
@@ -364,7 +347,7 @@ def detect_area_column(records: list[dict], configured: str | None) -> str | Non
             return configured
         if configured.lower() in lower and mostly_numeric(lower[configured.lower()]):
             return lower[configured.lower()]
-        return None  # explicit request that isn't usable — don't silently guess
+        return None  # explicit request that isn't usable - don't silently guess
 
     for cand in _AREA_COLUMN_CANDIDATES:
         if cand in lower and mostly_numeric(lower[cand]):
@@ -390,7 +373,7 @@ def apply_size_cap(labels: np.ndarray,
     Trim parcels that flooded far past their recorded area.
 
     For each labelled region with a recorded target, if its pixel count exceeds
-    size_factor × target it is cut back to the size_factor × target pixels
+    size_factor x target it is cut back to the size_factor x target pixels
     NEAREST the seed (Euclidean), and the farther overflow is released to
     background (label 0) for the operator to mend.  The in-budget core keeps its
     boundary-defined shape; only the runaway overflow is clipped.
@@ -399,7 +382,7 @@ def apply_size_cap(labels: np.ndarray,
     the runaway parcels, not the full sheet.  Returns (labels, n_capped,
     n_released).
     """
-    slices = ndi.find_objects(labels)   # index l-1 → tuple of slices (or None)
+    slices = ndi.find_objects(labels)   # index l-1 -> tuple of slices (or None)
     n_capped = n_released = 0
     for lab, (sr, sc) in seed_rc.items():
         tgt = target_px.get(lab)
@@ -414,7 +397,7 @@ def apply_size_cap(labels: np.ndarray,
         sub = labels[sl]
         ys, xs = np.where(sub == lab)
         if ys.size <= max_px:
-            continue                       # within tolerance — leave shape intact
+            continue                       # within tolerance - leave shape intact
         # Distances from the seed (translated into crop coordinates).
         d = (ys - (sr - sl[0].start))**2 + (xs - (sc - sl[1].start))**2
         far = np.argpartition(d, max_px)[max_px:]   # indices of the overflow
@@ -424,7 +407,7 @@ def apply_size_cap(labels: np.ndarray,
     return labels, n_capped, n_released
 
 
-# ── Main ───────────────────────────────────────────────────────────────────────
+# -- Main -----------------------------------------------------------------------
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Point-seeded watershed parcel extraction.")
@@ -467,7 +450,7 @@ def main() -> None:
     mend_width  = int(pcfg.get("mended_line_width_px", 3))
 
     if args.no_mended:
-        print("Note: --no-mended is deprecated and now has no effect — the model rasters "
+        print("Note: --no-mended is deprecated and now has no effect - the model rasters "
               "are the default. Pass --mended to use hand-corrected line layers.")
 
     # Extent / exclusion feature sets (CLI overrides config).
@@ -524,7 +507,7 @@ def main() -> None:
                 f"    Re-run with --mended to partition using the corrected lines.\n"
             )
 
-    # Reference grid (transform / size / CRS) — from the stitched boundary raster
+    # Reference grid (transform / size / CRS) - from the stitched boundary raster
     # if it exists, else the raw map (any supported format).  Both share the same grid.
     grid_src = stitched_path if stitched_path.exists() else find_raw(ROOT / paths["raw"], sheet)
     if grid_src is None or not grid_src.exists():
@@ -537,7 +520,7 @@ def main() -> None:
         transform = src.transform
         H, W = src.height, src.width
         # Honest CRS: carry the source EPSG through to the GeoJSON. None means the
-        # source has no CRS, or a custom CRS with no EPSG code — do NOT fabricate one
+        # source has no CRS, or a custom CRS with no EPSG code - do NOT fabricate one
         # (a silent default would mislabel the output), let the writer omit the crs
         # member and warn instead.
         try:
@@ -545,22 +528,70 @@ def main() -> None:
         except Exception:
             epsg = None
 
-    # ── Build the watershed ridge surface from all extent features ────────────
-    # Each feature contributes a weighted ridge; we take the max so solid lines
-    # (weight 1.0) dominate dashed lines (softer) where they coincide.  Only
-    # boundaries/dashed are linear; areal features (building/water) add their
-    # filled footprint as a barrier plateau.  boundary_vis is the union of the
-    # LINEAR barriers, kept only for the preview overlay.
-    surf        = np.zeros((H, W), dtype=np.float32)
+    surf, boundary_vis = build_ridge_surface(
+        sheet, cfg, extent_features, transform, H, W, mended_path, mend_width,
+        boundary_override=Path(args.boundary) if args.boundary else None,
+        dashed_weight=dashed_weight, feature_weight=feature_weight,
+        close_px=close_px, sigma=sigma,
+    )
+    exclude_mask = build_exclusion_mask(sheet, cfg, exclude_features, transform,
+                                        H, W, mended_path, mend_width)
+
+    mask = load_map_mask(sheet, cfg, W, H, use_mask)
+    if exclude_mask.any():   # carve excluded features out of the flood area (holes)
+        mask = (~exclude_mask) if mask is None else (mask & ~exclude_mask)
+
+    print(f"Points file: {points_path.name}")
+    pts = read_gpkg_points_wkb(points_path)
+    seeds = seed_markers(pts, transform, H, W, mask, use_size, size_column,
+                         size_unit, size_factor, seed_dil)
+    markers = seeds["markers"]
+
+    print(f"Watershed : sigma={sigma} close={close_px} seed_dilate={seed_dil} "
+          f"compactness={compactness} ...")
+    labels = watershed(surf, markers=markers, mask=mask, compactness=compactness)
+
+    # Fuzzy size cap: rein in parcels that ran away past their recorded area.
+    if seeds["target_px"]:
+        labels, capped, released = apply_size_cap(
+            labels, seeds["seed_rc"], seeds["target_px"], size_factor
+        )
+        print(f"Size cap  : trimmed {capped} runaway parcel(s), "
+              f"released {released:,} px to background")
+
+    n_written, dropped = write_parcels_geojson(
+        labels, seeds["rowid"], epsg, min_px, transform, out_geojson
+    )
+    print(f"\n{'-'*50}")
+    print(f"Parcels written : {n_written}  (dropped {dropped} < {min_px}px)")
+    print(f"GeoJSON -> {out_geojson.relative_to(ROOT)}")
+
+    _write_preview(labels, boundary_vis, out_preview)
+    print(f"Preview -> {out_preview.relative_to(ROOT)}")
+    print(f"\nNext:  python steps/05_vectorise/parcels/vectorise.py --sheet {sheet}")
+
+
+def build_ridge_surface(sheet, cfg, extent_features, transform, H, W, mended_path,
+                        mend_width, *, boundary_override, dashed_weight,
+                        feature_weight, close_px, sigma):
+    """Combine every extent feature into one watershed ridge surface.
+
+    Each feature adds a weighted ridge and we take the max, so solid lines
+    (weight 1.0) dominate softer dashed lines where they coincide. Linear
+    features (boundaries/dashed) contribute their traced lines; areal features
+    (building/water) add their filled footprint as a barrier plateau. The union
+    of the LINEAR barriers is returned separately for the preview overlay.
+    """
+    surf         = np.zeros((H, W), dtype=np.float32)
     boundary_vis = np.zeros((H, W), dtype=bool)
-    found_any   = False
+    found_any    = False
     for feat in extent_features:
         # --boundary overrides the raster used for the 'boundaries' feature only.
-        override = Path(args.boundary) if (feat == "boundaries" and args.boundary) else None
+        override = boundary_override if feat == "boundaries" else None
         b = load_feature_binary(feat, sheet, cfg, transform, H, W, mended_path,
                                 mend_width, override_path=override)
         if b is None:
-            print(f"  extent '{feat}': no raster/layer found — skipped")
+            print(f"  extent '{feat}': no raster/layer found - skipped")
             continue
         weight = (1.0 if feat == "boundaries"
                   else dashed_weight if feat == "dashed"
@@ -573,138 +604,123 @@ def main() -> None:
         del b
     if not found_any:
         sys.exit(
-            "None of the extent features produced a raster — nothing to wall the flood.\n"
+            "None of the extent features produced a raster - nothing to wall the flood.\n"
             f"  Wanted: {', '.join(extent_features)}\n"
             "Run the relevant predict + vectorise steps, or pass --extent with an available feature."
         )
 
-    # Areal features to carve OUT of every parcel (become holes in the coverage).
-    exclude_mask = np.zeros((H, W), dtype=bool)
-    for feat in exclude_features:
-        b = load_feature_binary(feat, sheet, cfg, transform, H, W, mended_path, mend_width)
-        if b is None:
-            print(f"  exclude '{feat}': no raster found — skipped")
-            continue
-        exclude_mask |= b
-        print(f"  exclude '{feat}': {int(b.sum()):,} px carved out")
-        del b
-
     # Shape the ridge surface: close colinear dashes, smooth to bridge gaps, clip.
-    # (Do this once on the combined weighted surface — same cost as the old
-    # single-boundary path — and clip rather than divide by max, so the weight
-    # ratios between solid and dashed ridges survive.)
+    # Clip (not divide-by-max) so the weight ratio between solid and dashed survives.
     if close_px > 0:
-        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_px*2+1, close_px*2+1))
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_px * 2 + 1, close_px * 2 + 1))
         surf = cv2.morphologyEx(surf, cv2.MORPH_CLOSE, k)
     if sigma > 0:
         surf = ndi.gaussian_filter(surf, sigma=sigma)
     np.clip(surf, 0.0, 1.0, out=surf)
+    return surf, boundary_vis
 
-    # ── Optional map-area mask ────────────────────────────────────────────────
-    mask = None
-    if use_mask:
-        for mp in [ROOT / paths["masks"] / sheet / f"{sheet}.png",
-                   ROOT / paths["masks"] / sheet / f"{sheet}.PNG",
-                   ROOT / paths["masks"] / f"{sheet}.png"]:
-            if mp.exists():
-                raw = cv2.imread(str(mp), cv2.IMREAD_GRAYSCALE)
-                if raw is not None:
-                    if (raw.shape[1], raw.shape[0]) != (W, H):
-                        raw = cv2.resize(raw, (W, H), interpolation=cv2.INTER_NEAREST)
-                    mask = raw > 0
-                    print(f"Map mask  : {mp.name}")
-                    break
-        if mask is None:
-            print("Map mask  : none found — partitioning full sheet")
 
-    # Carve excluded features out of the flood area (holes in the coverage).
-    if exclude_mask.any():
-        mask = (~exclude_mask) if mask is None else (mask & ~exclude_mask)
+def build_exclusion_mask(sheet, cfg, exclude_features, transform, H, W,
+                         mended_path, mend_width):
+    """Union of the areal features to carve OUT of every parcel (become holes)."""
+    exclude_mask = np.zeros((H, W), dtype=bool)
+    for feat in exclude_features:
+        b = load_feature_binary(feat, sheet, cfg, transform, H, W, mended_path, mend_width)
+        if b is None:
+            print(f"  exclude '{feat}': no raster found - skipped")
+            continue
+        exclude_mask |= b
+        print(f"  exclude '{feat}': {int(b.sum()):,} px carved out")
+        del b
+    return exclude_mask
 
-    # ── Seeds from apportionment points ───────────────────────────────────────
-    print(f"Points file: {points_path.name}")
-    pts = read_gpkg_points_wkb(points_path)
 
-    # Recorded-area column for the fuzzy size cap (fixed pixel area for the sheet).
+def load_map_mask(sheet, cfg, W, H, use_mask):
+    """Optional map-area mask (data/map_area_masks/<sheet>/), resized to the grid, or None."""
+    if not use_mask:
+        return None
+    paths = cfg["paths"]
+    for mp in [ROOT / paths["masks"] / sheet / f"{sheet}.png",
+               ROOT / paths["masks"] / sheet / f"{sheet}.PNG",
+               ROOT / paths["masks"] / f"{sheet}.png"]:
+        if mp.exists():
+            raw = cv2.imread(str(mp), cv2.IMREAD_GRAYSCALE)
+            if raw is not None:
+                if (raw.shape[1], raw.shape[0]) != (W, H):
+                    raw = cv2.resize(raw, (W, H), interpolation=cv2.INTER_NEAREST)
+                print(f"Map mask  : {mp.name}")
+                return raw > 0
+    print("Map mask  : none found - partitioning full sheet")
+    return None
+
+
+def seed_markers(pts, transform, H, W, mask, use_size, size_column,
+                 size_unit, size_factor, seed_dil):
+    """Place one integer marker per apportionment point inside the sheet/mask.
+
+    Returns a dict with `markers` (int32 label image) plus per-label lookups:
+    `rowid`, `seed_rc` (the seed pixel), and `target_px` (the recorded area in
+    pixels, for the size cap - only when use_size and a usable area column exist).
+    """
     area_col = detect_area_column(pts, size_column) if use_size else None
     unit_m2  = _AREA_UNIT_M2.get(size_unit)
     pixel_area_m2 = abs(transform.a * transform.e)
-    if use_size and area_col and unit_m2:
+    if area_col and unit_m2:
         print(f"Size guide : column '{area_col}'  unit={size_unit}  "
-              f"factor={size_factor}  (pixel={pixel_area_m2:.3f} m²)")
+              f"factor={size_factor}  (pixel={pixel_area_m2:.3f} m2)")
     elif use_size:
-        why = ("no numeric area column found" if not area_col
-               else f"unknown size_unit '{size_unit}'")
-        print(f"Size guide : disabled — {why}")
+        why = "no numeric area column found" if not area_col else f"unknown size_unit '{size_unit}'"
+        print(f"Size guide : disabled - {why}")
 
-    inv_a = 1.0 / transform.a
-    inv_e = 1.0 / transform.e
+    inv_a, inv_e = 1.0 / transform.a, 1.0 / transform.e
     markers = np.zeros((H, W), dtype=np.int32)
-    label_to_rowid: dict[int, object] = {}
-    label_to_seed_rc: dict[int, tuple[int, int]] = {}
-    label_to_target_px: dict[int, float] = {}
-    label = 0
-    seeded = skipped = 0
+    rowid: dict[int, object] = {}
+    seed_rc: dict[int, tuple[int, int]] = {}
+    target_px: dict[int, float] = {}
+    label = seeded = skipped = 0
     for rec in pts:
         col = int(round((rec["_geom_x"] - transform.c) * inv_a))
         row = int(round((rec["_geom_y"] - transform.f) * inv_e))
-        if not (0 <= col < W and 0 <= row < H):
+        if not (0 <= col < W and 0 <= row < H) or (mask is not None and not mask[row, col]):
             skipped += 1
             continue
-        if mask is not None and not mask[row, col]:
-            skipped += 1
-            continue
-        if markers[row, col] != 0:           # two points in same pixel — keep first
+        if markers[row, col] != 0:           # two points in same pixel - keep first
             continue
         label += 1
         markers[row, col] = label
-        label_to_rowid[label] = rec.get("rowid", None)
-        label_to_seed_rc[label] = (row, col)
+        rowid[label] = rec.get("rowid", None)
+        seed_rc[label] = (row, col)
         if area_col and unit_m2:
             a = _as_float(rec.get(area_col))
             if a is not None:
-                label_to_target_px[label] = (a * unit_m2) / pixel_area_m2
+                target_px[label] = (a * unit_m2) / pixel_area_m2
         seeded += 1
     print(f"Points    : {seeded} seeded, {skipped} outside sheet/mask  (of {len(pts)})")
     if seeded == 0:
-        sys.exit("No apportionment points fall within the sheet — nothing to segment.")
+        sys.exit("No apportionment points fall within the sheet - nothing to segment.")
     if area_col:
-        print(f"           {len(label_to_target_px)} of {seeded} seeds have a recorded area")
+        print(f"           {len(target_px)} of {seeded} seeds have a recorded area")
 
     if seed_dil > 0:
         # Grow each single-pixel seed into a small box so the marker is robust.
-        # grey_dilation propagates the max label within the window — for seeds a
-        # few px apart, collisions are vanishingly rare.  Crucially it is a
-        # SEPARABLE box operation (two cheap 1-D passes, no large temporaries),
-        # unlike skimage.expand_labels whose full-image distance transform with
-        # return_indices allocates an ~8 GB int64 index array on big sheets and
-        # gets OOM-killed (e.g. the 503M-px Luccombe sheet).  cv2.dilate is not an
-        # option either — it rejects int32 label images.
+        # grey_dilation propagates the max label within the window (collisions are
+        # vanishingly rare for seeds a few px apart) and is a SEPARABLE box op with
+        # no large temporaries - unlike skimage.expand_labels, whose full-image
+        # distance transform OOM-kills big sheets, or cv2.dilate, which rejects int32.
         size = seed_dil * 2 + 1
         markers = ndi.grey_dilation(markers, size=(size, size)).astype(np.int32)
 
-    # ── Watershed ─────────────────────────────────────────────────────────────
-    print(f"Watershed : sigma={sigma} close={close_px} seed_dilate={seed_dil} "
-          f"compactness={compactness} ...")
-    labels = watershed(surf, markers=markers, mask=mask, compactness=compactness)
+    return {"markers": markers, "rowid": rowid, "seed_rc": seed_rc, "target_px": target_px}
 
-    # ── Fuzzy size cap: rein in parcels that ran away past their recorded area ──
-    if label_to_target_px:
-        labels, capped, released = apply_size_cap(
-            labels, label_to_seed_rc, label_to_target_px, size_factor
-        )
-        print(f"Size cap  : trimmed {capped} runaway parcel(s), "
-              f"released {released:,} px to background")
 
-    # ── Vectorise the whole label raster as ONE coverage ──────────────────────
-    # rasterio.features.shapes polygonises all labels in a single pass, tracing
-    # along pixel GRID LINES.  Adjacent parcels therefore share *identical* edge
-    # geometry (a gap-free, overlap-free coverage) — unlike per-label contour
-    # tracing, which left ~1px slivers between neighbours.  Interior holes are
-    # preserved too.  Coordinates come out in world units (transform applied).
-    print("Vectorising coverage (rasterio.features.shapes) ...")
-    feats = []
-    dropped_small = 0
+def write_parcels_geojson(labels, label_to_rowid, epsg, min_px, transform, out_geojson):
+    """Polygonise the whole label raster as ONE coverage and write parcel_preds.geojson.
+
+    rasterio.features.shapes traces along pixel grid lines in a single pass, so
+    adjacent parcels share identical edge geometry (gap-free, overlap-free) and
+    interior holes are preserved. Returns (n_written, n_dropped_small).
+    """
+    feats, dropped = [], 0
     counts = np.bincount(labels.ravel().astype(np.int64))   # px per label, one pass
     for geom, val in rio_shapes(labels.astype(np.int32), mask=(labels > 0),
                                 transform=transform, connectivity=4):
@@ -713,7 +729,7 @@ def main() -> None:
             continue
         px = int(counts[lab]) if lab < len(counts) else 0
         if px < min_px:
-            dropped_small += 1
+            dropped += 1
             continue
         rid = label_to_rowid.get(lab)
         feats.append({
@@ -730,19 +746,10 @@ def main() -> None:
         doc["crs"] = {"type": "name",
                       "properties": {"name": f"urn:ogc:def:crs:EPSG::{epsg}"}}
     else:
-        print("  Note: source CRS has no EPSG code — writing GeoJSON without a CRS "
+        print("  Note: source CRS has no EPSG code - writing GeoJSON without a CRS "
               "member. Set the CRS on the parcels layer in QGIS after vectorising.")
     out_geojson.write_text(json.dumps(doc, separators=(",", ":")))
-    features = feats   # for the summary print below
-
-    print(f"\n{'─'*50}")
-    print(f"Parcels written : {len(features)}  (dropped {dropped_small} < {min_px}px)")
-    print(f"GeoJSON → {out_geojson.relative_to(ROOT)}")
-
-    # ── Preview PNG (random colours per parcel over the boundary lines) ────────
-    _write_preview(labels, boundary_vis, out_preview)
-    print(f"Preview → {out_preview.relative_to(ROOT)}")
-    print(f"\nNext:  python steps/05_vectorise/parcels/vectorise.py --sheet {sheet}")
+    return len(feats), dropped
 
 
 def _write_preview(labels: np.ndarray, boundary: np.ndarray, out_path: Path,
@@ -750,7 +757,7 @@ def _write_preview(labels: np.ndarray, boundary: np.ndarray, out_path: Path,
     """Colour each parcel randomly, overlay the boundary lines in black, downscale.
 
     Downsamples (by integer stride) BEFORE colourising so we never allocate a
-    full-resolution RGB array — at ~400M px that would be >1 GB.
+    full-resolution RGB array - at ~400M px that would be >1 GB.
     """
     H, W = labels.shape
     step = max(1, int(np.ceil(max(H, W) / max_dim)))
