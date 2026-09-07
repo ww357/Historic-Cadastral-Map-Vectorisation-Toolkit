@@ -23,52 +23,8 @@ import geopandas as gpd
 import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
-
-
-def _rel(p: Path) -> str:
-    """Path relative to ROOT for printing, falling back to absolute for --gpkg
-    targets outside the repo."""
-    try:
-        return str(p.relative_to(ROOT))
-    except ValueError:
-        return str(p)
-
-
-def resolve_output_gpkg(sheet_id: str, cfg: dict, gpkg_arg: str | None,
-                        mended: bool) -> Path:
-    """
-    Pick the GeoPackage to write to.
-
-    Default is paths.outputs; --mended switches to paths.outputs_mended; --gpkg
-    overrides both. The target is deliberately never inferred from what happens
-    to exist on disk: this script drops and rewrites the "text" layer, so
-    silently redirecting into a hand-corrected file would destroy mending.
-    """
-    if gpkg_arg:
-        p = Path(gpkg_arg)
-        return p if p.is_absolute() else ROOT / p
-
-    if not mended:
-        return ROOT / cfg["paths"]["outputs"] / f"{sheet_id}.gpkg"
-
-    mended_dir = ROOT / cfg["paths"].get("outputs_mended", "data/mended outputs")
-    # Mended files are named for the sheet but not always exactly
-    # (e.g. "Porlock mended.gpkg") — same resolution as parcels/predict.py.
-    if mended_dir.exists():
-        exact = mended_dir / f"{sheet_id}.gpkg"
-        if exact.exists():
-            return exact
-        matches = sorted(p for p in mended_dir.glob("*.gpkg")
-                         if sheet_id.lower() in p.stem.lower())
-        if matches:
-            return matches[0]
-
-    sys.exit(
-        f"--mended: no GeoPackage for sheet '{sheet_id}' in {mended_dir}\n"
-        f"Looked for '{sheet_id}.gpkg' and any *.gpkg with '{sheet_id}' in the name.\n"
-        f"Put the mended file there, or drop --mended to write to "
-        f"{cfg['paths']['outputs']}{sheet_id}.gpkg."
-    )
+sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
+from common import load_config, rel_to_root, resolve_output_gpkg   # noqa: E402
 
 
 def main():
@@ -96,7 +52,7 @@ def main():
     if not geojson.exists():
         sys.exit(f"GeoJSON not found: {geojson}")
 
-    print(f"Output GPKG: {_rel(gpkg_path)}")
+    print(f"Output GPKG: {rel_to_root(gpkg_path)}")
 
     # Ensure outputs directory exists
     gpkg_path.parent.mkdir(parents=True, exist_ok=True)
@@ -105,7 +61,7 @@ def main():
     gdf = gpd.read_file(geojson)
     print(f"  {len(gdf):,} features   CRS: {gdf.crs}")
 
-    # Fiona cannot handle pandas StringDtype — cast to plain object
+    # Fiona cannot handle pandas StringDtype - cast to plain object
     str_cols = gdf.select_dtypes(include="string").columns.tolist()
     if str_cols:
         print(f"  Casting StringDtype columns: {str_cols}")
@@ -130,10 +86,10 @@ def main():
 
     print(f"Writing to {gpkg_path.name}  (mode={mode!r}) ...")
     gdf.to_file(str(gpkg_path), driver="GPKG", layer="text", mode=mode)
-    print(f"\nDone — {len(gdf):,} text instances in 'text' layer of {gpkg_path.name}")
+    print(f"\nDone - {len(gdf):,} text instances in 'text' layer of {gpkg_path.name}")
     print(
         f"\nNext step: open {gpkg_path.name} in QGIS and review the 'text' layer.\n"
-        f"  There is no feedback loop for text — the Rumsey weights are used as-is\n"
+        f"  There is no feedback loop for text - the Rumsey weights are used as-is\n"
         f"  (see CONTEXT.md 'What Was Deliberately NOT Done')."
     )
 

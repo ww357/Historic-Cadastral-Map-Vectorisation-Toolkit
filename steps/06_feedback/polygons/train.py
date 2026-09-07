@@ -4,11 +4,11 @@ Feedback fine-tune MapSAM DoRA weights from QGIS-corrected polygon predictions.
 Differs from 03_finetune/polygons/train.py in three ways:
 
   1. Data source: training pairs come from prepare.py output
-     (data/annotations/<feature>/feedback/<sheet>/) — i.e. rasterised QGIS-corrected
-     polygons — rather than hand-drawn labelme annotations.
+     (data/annotations/<feature>/feedback/<sheet>/) - i.e. rasterised QGIS-corrected
+     polygons - rather than hand-drawn labelme annotations.
 
   2. Replay buffer: pre-training annotation patches from all labelled sheets
-     (data/annotations/<feature>/<sheet>/ — any sheet dir that is not "feedback/")
+     (data/annotations/<feature>/<sheet>/ - any sheet dir that is not "feedback/")
      are mixed into every training epoch at replay_ratio.  This prevents the
      SPGen heads and DoRA Q/V weights from drifting away from the multi-sheet
      knowledge built during 03_finetune.
@@ -62,26 +62,14 @@ ROOT       = Path(__file__).resolve().parents[3]
 MAPSAM_DIR = ROOT / "models" / "MapSAM"
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(MAPSAM_DIR))
+sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
+from common import tensor_from_numpy   # noqa: E402
 
 from sam_dora_image_encoder import DoRA_Sam      # noqa: E402
 from segment_anything import sam_model_registry  # noqa: E402
 
 
-def _tensor_from_numpy(arr: np.ndarray) -> torch.Tensor:
-    """torch.from_numpy replacement compatible with NumPy 2.x.
-
-    torch.from_numpy checks the C-level numpy.ndarray type, which changed in
-    NumPy 2.0, so it fails with "expected np.ndarray (got numpy.ndarray)" when
-    PyTorch was compiled against NumPy 1.x. Routing through memoryview /
-    torch.frombuffer bypasses that type check regardless of NumPy version.
-    """
-    arr = np.ascontiguousarray(arr)
-    return (torch.frombuffer(memoryview(arr), dtype=torch.float32)
-                 .reshape(arr.shape)
-                 .clone())
-
-
-# ── Augmentation ──────────────────────────────────────────────────────────────
+# -- Augmentation --------------------------------------------------------------
 
 class _Augment:
     def __init__(self, img_size: int, low_res: int):
@@ -110,13 +98,13 @@ class _Augment:
         low_res_m = zoom(mask, (self.low_res / lh, self.low_res / lw), order=0)
 
         return (
-            _tensor_from_numpy(image.astype(np.float32)),
-            _tensor_from_numpy(mask.astype(np.float32)).long(),
-            _tensor_from_numpy(low_res_m.astype(np.float32)).long(),
+            tensor_from_numpy(image.astype(np.float32)),
+            tensor_from_numpy(mask.astype(np.float32)).long(),
+            tensor_from_numpy(low_res_m.astype(np.float32)).long(),
         )
 
 
-# ── Dataset ───────────────────────────────────────────────────────────────────
+# -- Dataset -------------------------------------------------------------------
 
 class PolygonDataset(Dataset):
     def __init__(self, pairs: list[tuple[Path, Path]],
@@ -127,7 +115,7 @@ class PolygonDataset(Dataset):
             if m is not None and (m > 0).any():
                 valid.append((img_p, mask_p))
             else:
-                print(f"  WARNING: empty mask skipped — {mask_p.name}")
+                print(f"  WARNING: empty mask skipped - {mask_p.name}")
         self.pairs   = valid
         self.augment = _Augment(img_size, low_res) if do_aug else None
         self.img_size = img_size
@@ -156,16 +144,16 @@ class PolygonDataset(Dataset):
         if self.augment is not None:
             image_t, label_t, low_res_t = self.augment(img, mask)
         else:
-            # No augmentation — just resize and scale
+            # No augmentation - just resize and scale
             _, h, w = img.shape
             if h != self.img_size or w != self.img_size:
                 img  = zoom(img,  (1, self.img_size / h, self.img_size / w), order=3)
                 mask = zoom(mask, (self.img_size / h, self.img_size / w), order=0)
             lh, lw    = mask.shape
             low_res_m = zoom(mask, (self.low_res / lh, self.low_res / lw), order=0)
-            image_t   = _tensor_from_numpy(img.astype(np.float32))
-            label_t   = _tensor_from_numpy(mask.astype(np.float32)).long()
-            low_res_t = _tensor_from_numpy(low_res_m.astype(np.float32)).long()
+            image_t   = tensor_from_numpy(img.astype(np.float32))
+            label_t   = tensor_from_numpy(mask.astype(np.float32)).long()
+            low_res_t = tensor_from_numpy(low_res_m.astype(np.float32)).long()
 
         return {
             "image":         image_t,
@@ -175,7 +163,7 @@ class PolygonDataset(Dataset):
         }
 
 
-# ── Loss ──────────────────────────────────────────────────────────────────────
+# -- Loss ----------------------------------------------------------------------
 
 def _dice_loss(logits, target, smooth=1e-6):
     probs  = torch.sigmoid(logits)
@@ -205,7 +193,7 @@ def _combined_loss(low_res_logits, coarse_mask, target_low_res, dice_w):
     )
 
 
-# ── Validation ────────────────────────────────────────────────────────────────
+# -- Validation ----------------------------------------------------------------
 
 @torch.no_grad()
 def _validate(model, loader: DataLoader, multimask_output: bool,
@@ -228,7 +216,7 @@ def _validate(model, loader: DataLoader, multimask_output: bool,
     return iou_sum / count if count else 0.0
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# -- Helpers -------------------------------------------------------------------
 
 def _collect_pairs(ann_dir: Path) -> list[tuple[Path, Path]]:
     imgs_dir = ann_dir / "images"
@@ -280,14 +268,14 @@ def _resolve_weights(args_weights: str | None, feature: str,
     )
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# -- Main ----------------------------------------------------------------------
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Feedback fine-tune MapSAM DoRA from QGIS-corrected polygon predictions."
     )
     parser.add_argument("--sheet",   required=True,
-                        help="Map sheet name — feedback data must exist in "
+                        help="Map sheet name - feedback data must exist in "
                              "data/annotations/<feature>/feedback/<sheet>/")
     parser.add_argument("--feature", required=True,
                         help="Feature class (e.g. water, building, vegetation)")
@@ -323,7 +311,7 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device    : {device}")
 
-    # ── Feedback data ─────────────────────────────────────────────────────────
+    # -- Feedback data ---------------------------------------------------------
     fb_ann_dir = (ROOT / paths["annotations"]
                   / args.feature / "feedback" / args.sheet)
     fb_pairs   = _collect_pairs(fb_ann_dir)
@@ -334,16 +322,16 @@ def main() -> None:
             f"--feature {args.feature} first."
         )
 
-    # ── Replay pool (pre-training hand-drawn annotations, all sheets) ─────────
+    # -- Replay pool (pre-training hand-drawn annotations, all sheets) ---------
     ann_base   = ROOT / paths["annotations"] / args.feature
     all_replay = []
     if ann_base.exists():
         for sheet_dir in sorted(ann_base.iterdir()):
-            # Skip the 'feedback/' subfolder — those are corrected predictions, not GT
+            # Skip the 'feedback/' subfolder - those are corrected predictions, not GT
             if sheet_dir.is_dir() and sheet_dir.name != "feedback":
                 all_replay.extend(_collect_pairs(sheet_dir))
 
-    # ── Build train / val splits ───────────────────────────────────────────────
+    # -- Build train / val splits -----------------------------------------------
     rng = np.random.default_rng(seed)
 
     if all_replay:
@@ -382,17 +370,17 @@ def main() -> None:
         val_set = {fb_pairs[i][0].stem for i in perm[:n_val]}
         train_pairs = [p for p in fb_pairs if p[0].stem not in val_set]
         val_pairs   = [p for p in fb_pairs if p[0].stem in val_set]
-        print(f"Feedback  : {len(fb_pairs)} pairs → "
+        print(f"Feedback  : {len(fb_pairs)} pairs -> "
               f"{len(train_pairs)} train / {len(val_pairs)} val")
 
-    # ── Dirs ──────────────────────────────────────────────────────────────────
+    # -- Dirs ------------------------------------------------------------------
     finetuned_dir   = ROOT / paths["models_finetuned"]
     logs_dir        = ROOT / paths["logs"]
     mapsam_base_dir = ROOT / paths["models_base"] / "MapSAM"
     finetuned_dir.mkdir(parents=True, exist_ok=True)
     logs_dir.mkdir(parents=True, exist_ok=True)
 
-    # ── Model ─────────────────────────────────────────────────────────────────
+    # -- Model -----------------------------------------------------------------
     sam_ckpt = mapsam_base_dir / "original_weights" / "sam_vit_b_01ec64.pth"
     if not sam_ckpt.exists():
         sys.exit(f"SAM base checkpoint not found: {sam_ckpt}")
@@ -416,17 +404,17 @@ def main() -> None:
     multimask_output = mcfg["num_classes"] > 1
     low_res          = img_embed_size * 4   # 128 for ViT-B
 
-    # ── Run outputs ───────────────────────────────────────────────────────────
+    # -- Run outputs -----------------------------------------------------------
     run_name  = args.name or datetime.now().strftime("%Y%m%d_%H%M")
     run_name  = f"mapsam_{args.feature}_fb_{run_name}"
     best_path = finetuned_dir / f"{run_name}_best.pth"
     log_path  = logs_dir      / f"{run_name}_metrics.csv"
 
     print(f"\nRun       : {run_name}")
-    print(f"Best →      {best_path.relative_to(ROOT)}")
-    print(f"Log  →      {log_path.relative_to(ROOT)}\n")
+    print(f"Best ->      {best_path.relative_to(ROOT)}")
+    print(f"Log  ->      {log_path.relative_to(ROOT)}\n")
 
-    # ── DataLoaders ───────────────────────────────────────────────────────────
+    # -- DataLoaders -----------------------------------------------------------
     rng.shuffle(train_pairs)
 
     train_ds = PolygonDataset(train_pairs, img_size, low_res, do_aug=True)
@@ -437,7 +425,7 @@ def main() -> None:
     val_loader   = DataLoader(val_ds,   batch_size=bs, shuffle=False,
                               num_workers=2, pin_memory=True)
 
-    # ── Optimiser ─────────────────────────────────────────────────────────────
+    # -- Optimiser -------------------------------------------------------------
     optimizer = optim.AdamW(
         filter(lambda p: p.requires_grad, net.parameters()),
         lr=lr, betas=(0.9, 0.999), weight_decay=0.01,
@@ -447,7 +435,7 @@ def main() -> None:
     def cosine_lr(i: int) -> float:
         return lr * 0.5 * (1.0 + math.cos(math.pi * i / max(max_iters, 1)))
 
-    # ── Training loop ─────────────────────────────────────────────────────────
+    # -- Training loop ---------------------------------------------------------
     with open(log_path, "w", newline="") as f:
         csv.writer(f).writerow(["epoch", "train_loss", "val_iou_cross_sheet"])
 
@@ -492,11 +480,11 @@ def main() -> None:
             best_iou   = val_iou
             no_improve = 0
             net.save_dora_parameters(str(best_path))
-            print(f"    ✓ new best {label}={val_iou:.4f}")
+            print(f"    new best {label}={val_iou:.4f}")
         else:
             no_improve += 1
             if no_improve >= patience:
-                print(f"  Early stopping — best {label}={best_iou:.4f}")
+                print(f"  Early stopping - best {label}={best_iou:.4f}")
                 break
 
     print(f"\nDone. Best {label}={best_iou:.4f}")

@@ -21,7 +21,7 @@ Weight search order (starting weights):
   3. Most recently modified *.weights.h5 in models/base/ (recursive)
 
 Note: step 03 working weights (models/finetuned/working/) are deliberately
-excluded from this search — feedback training always starts from the iterative
+excluded from this search - feedback training always starts from the iterative
 weights (general model), not from the sheet-specific working weights.
 
 Reads  : data/training/boundary_dataset/manifest.csv
@@ -161,11 +161,11 @@ def build_training_arrays(
     replay_ratio controls what fraction of each batch comes from ground_truth.
     n_gt is scaled so the ratio is approximately met:
       replay_ratio = n_gt / (n_gt + n_fb)
-      → n_gt = n_fb * replay_ratio / (1 - replay_ratio)
+      -> n_gt = n_fb * replay_ratio / (1 - replay_ratio)
 
     GT tiles are sampled with replacement if n_gt > len(gt_tiles) (allowing
-    each GT example to appear multiple times in one epoch — same as oversampling).
-    Capped at 5× to avoid a single GT-dominated epoch.
+    each GT example to appear multiple times in one epoch - same as oversampling).
+    Capped at 5x to avoid a single GT-dominated epoch.
 
     Returns X [N,256,256,1], y [N,256,256,1], w [N] (float32 sample weights).
     """
@@ -308,20 +308,20 @@ class CrossSheetCallback(tf.keras.callbacks.Callback):
             f"\n  Cross-sheet Path-F1: {path_f1:.4f}  "
             f"(R={path_rec:.3f}  P={path_prec:.3f})  "
             f"APL: {apl_total:.0f}px  "
-            f"Est. mending: {est_time:.1f} min  (relative only, R²=0.317)"
+            f"Est. mending: {est_time:.1f} min  (relative only, R2=0.317)"
         )
 
         if path_f1 > self.best_f1:
             self.best_f1     = path_f1
             self._no_improve = 0
             self.model.save_weights(str(self.best_weights_path))
-            print(f"  ✓ New best cross-sheet path_f1={path_f1:.4f} — weights saved")
+            print(f"  New best cross-sheet path_f1={path_f1:.4f} - weights saved")
         else:
             self._no_improve += 1
             print(f"  No improvement ({self._no_improve}/{self.patience})")
             if self._no_improve >= self.patience:
                 print(
-                    f"  Early stopping — cross-sheet Path-F1 not improving.\n"
+                    f"  Early stopping - cross-sheet Path-F1 not improving.\n"
                     f"  Best={self.best_f1:.4f}  "
                     f"(model is drifting away from generalised performance)"
                 )
@@ -444,7 +444,7 @@ def main():
     print(f"  Feedback tiles    : {len(fb_tiles):>5} tiles  "
           f"for sheet '{sheet_id}'")
     print(f"  Cross-sheet val   : {len(val_tiles):>5} tiles  "
-          f"from {len(val_sheets)} sheets  (≠ '{sheet_id}')")
+          f"from {len(val_sheets)} sheets  (!= '{sheet_id}')")
 
     if not fb_tiles:
         sys.exit(
@@ -481,7 +481,7 @@ def main():
     #   1. --weights CLI argument (explicit path)
     #   2. Most recently modified feedback_v* in iterative/
     #   3. Most recently modified *.weights.h5 in models/base/ (recursive)
-    # Working weights (step 03) are intentionally excluded — feedback always
+    # Working weights (step 03) are intentionally excluded - feedback always
     # starts from the general iterative model, not a sheet-specific finetune.
     start_weights = args.weights
     if start_weights is None:
@@ -505,13 +505,13 @@ def main():
         model.load_weights(start_weights)
         print(f"\nStarting weights [{source}]: {p.name}")
     else:
-        print("\nNo starting weights found — fine-tuning from random initialisation")
+        print("\nNo starting weights found - fine-tuning from random initialisation")
         print("  Pass --weights <path> to specify a weights file.")
 
     # ---- Freeze encoder blocks ----------------------------------------------
     if freeze_n > 0:
         n_frozen = freeze_encoder_blocks(model, freeze_n)
-        print(f"Encoder blocks 1–{freeze_n} frozen: {n_frozen} layers set non-trainable")
+        print(f"Encoder blocks 1-{freeze_n} frozen: {n_frozen} layers set non-trainable")
     else:
         print("Encoder freezing disabled (--no-freeze)")
 
@@ -550,7 +550,7 @@ def main():
         )
         callbacks = [cb]
     else:
-        # No cross-sheet val — fall back to saving best by training loss
+        # No cross-sheet val - fall back to saving best by training loss
         callbacks = [
             tf.keras.callbacks.ModelCheckpoint(
                 str(best_path), save_weights_only=True,
@@ -568,11 +568,11 @@ def main():
     )
 
     # ---- Train --------------------------------------------------------------
-    print(f"\n── Training ────────────────────────────────────────────────")
+    print(f"\n-- Training ------------------------------------------------")
     print(f"Run name     : {run_name}")
     print(f"Epochs       : {epochs}  |  LR: {fb_lr}  |  Batch: {batch_size}")
-    print(f"Best weights → {best_path.relative_to(ROOT)}")
-    print(f"Metrics log  → {log_path.relative_to(ROOT)}\n")
+    print(f"Best weights -> {best_path.relative_to(ROOT)}")
+    print(f"Metrics log  -> {log_path.relative_to(ROOT)}\n")
 
     model.fit(
         train_ds,
@@ -585,7 +585,7 @@ def main():
     print(f"\nDone.")
     if val_tiles:
         print(f"Best cross-sheet path_f1 = {best_f1:.4f}")
-    print(f"Weights saved → {best_path.relative_to(ROOT)}")
+    print(f"Weights saved -> {best_path.relative_to(ROOT)}")
     print(
         f"\nThese weights are now the active iterative model.\n"
         f"Step 03 finetune and step 04 predict will use them automatically\n"

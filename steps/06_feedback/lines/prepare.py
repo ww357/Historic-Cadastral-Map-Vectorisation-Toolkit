@@ -1,37 +1,37 @@
 """
-Rasterise corrected boundary vectors from GeoPackage back to 256×256 training tiles,
+Rasterise corrected boundary vectors from GeoPackage back to 256x256 training tiles,
 then register them in the dataset manifest for feedback fine-tuning.
 
 Two sources of new tiles are added to the training dataset in one pass:
 
   1. ANNOTATION tiles (ground_truth): hand-drawn masks from data/annotations/boundary/
      for the current sheet that are not yet in the manifest.  These are full-weight
-     training examples — equivalent in quality to the original training data.
+     training examples - equivalent in quality to the original training data.
 
   2. FEEDBACK tiles (pseudo_label): rasterised from the mended 'boundaries' layer in
      the GeoPackage.  Only patches where the U-Net prediction was used are eligible
-     (hand-annotated patches are excluded — rasterising them via the vector round-trip
+     (hand-annotated patches are excluded - rasterising them via the vector round-trip
      would degrade clean ground truth through simplification artefacts).
 
 For each eligible feedback patch:
   1. Clips the mended 'boundaries' GeoDataFrame to the patch extent
   2. Buffers LineStrings by line_width/2 CRS units to reconstruct line width
-  3. Rasterises to a 512×512 binary mask
-  4. Splits to four 256×256 tiles matching the training dataset layout
+  3. Rasterises to a 512x512 binary mask
+  4. Splits to four 256x256 tiles matching the training dataset layout
   5. Saves image and mask tiles (suffix _fb) to the training dataset directories
   6. Appends manifest entries with source=feedback, tier=pseudo_label
 
-Reads  : data/outputs/<SHEET_ID>.gpkg            — mended boundaries layer
+Reads  : data/outputs/<SHEET_ID>.gpkg            - mended boundaries layer
          data/patches/metadata/<SHEET_ID>_patches.csv
-         data/predictions/boundaries/<SHEET_ID>/  — eligible patch check
-         data/patches/images/<SHEET_ID>/           — source image patches
-         data/annotations/boundary/<SHEET_ID>/masks/  — annotation masks (if any)
-         data/raw/<SHEET_ID>/<SHEET_ID>.tif        — georef transform
+         data/predictions/boundaries/<SHEET_ID>/  - eligible patch check
+         data/patches/images/<SHEET_ID>/           - source image patches
+         data/annotations/boundary/<SHEET_ID>/masks/  - annotation masks (if any)
+         data/raw/<SHEET_ID>/<SHEET_ID>.tif        - georef transform
 
-Writes : data/training/boundary_dataset/train/             — new 256px image tiles
-         data/training/boundary_dataset/annotation/train/  — new 256px mask tiles
-         data/training/boundary_dataset/manifest.csv       — updated manifest
-         data/feedback/boundary/<SHEET_ID>/eligible.csv    — per-patch eligibility log
+Writes : data/training/boundary_dataset/train/             - new 256px image tiles
+         data/training/boundary_dataset/annotation/train/  - new 256px mask tiles
+         data/training/boundary_dataset/manifest.csv       - updated manifest
+         data/feedback/boundary/<SHEET_ID>/eligible.csv    - per-patch eligibility log
 
 Usage:
     conda activate maptools
@@ -55,12 +55,13 @@ import pandas as pd
 import rasterio
 from rasterio.features import rasterize as rio_rasterize
 from rasterio.transform import Affine
-import yaml
 from PIL import Image
 from shapely.geometry import box
 from tqdm import tqdm
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
+from common import find_mended, find_raw, load_config, resolve_input_gpkg   # noqa: E402
 
 MANIFEST_COLS = ["split", "image_path", "mask_path", "sheet", "source", "tier"]
 
@@ -68,75 +69,6 @@ MANIFEST_COLS = ["split", "image_path", "mask_path", "sheet", "source", "tier"]
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-
-def load_config() -> dict:
-    p = ROOT / "config.yaml"
-    if not p.exists():
-        sys.exit(f"config.yaml not found at {p}")
-    return yaml.safe_load(p.read_text())
-
-
-# Raw map formats, in resolution priority (matches patchify.py). Used only to
-# read georef; assumed non-georeferenced when absent.
-RAW_EXTENSIONS = (".tif", ".tiff", ".vrt", ".jpg", ".jpeg", ".png")
-
-
-def find_raw(raw_root: Path, sheet_id: str) -> Path | None:
-    for ext in RAW_EXTENSIONS:
-        p = raw_root / sheet_id / f"{sheet_id}{ext}"
-        if p.exists():
-            return p
-    return None
-
-
-def find_mended(sheet_id: str, cfg: dict) -> Path | None:
-    """Hand-corrected GeoPackage for the sheet in paths.outputs_mended, or None.
-    Exact name first, then any *.gpkg containing the sheet ID (e.g. 'Porlock mended.gpkg')."""
-    d = ROOT / cfg["paths"].get("outputs_mended", "data/mended outputs")
-    if not d.is_dir():
-        return None
-    exact = d / f"{sheet_id}.gpkg"
-    if exact.exists():
-        return exact
-    hits = sorted(p for p in d.glob("*.gpkg") if sheet_id.lower() in p.stem.lower())
-    return hits[0] if hits else None
-
-
-def resolve_input_gpkg(sheet_id: str, cfg: dict, gpkg_arg: str | None,
-                       mended: bool) -> Path:
-    """
-    Pick the GeoPackage to READ mended vectors from.
-
-    Same rule as every other step: default paths.outputs, --mended switches to
-    paths.outputs_mended, --gpkg overrides both.  If a mended file exists but was
-    not asked for, warn loudly — silently training on the un-mended file would
-    discard the corrections this whole step exists to capture.
-    """
-    if gpkg_arg:
-        p = Path(gpkg_arg)
-        return p if p.is_absolute() else ROOT / p
-
-    if mended:
-        found = find_mended(sheet_id, cfg)
-        if found is None:
-            d = ROOT / cfg["paths"].get("outputs_mended", "data/mended outputs")
-            sys.exit(
-                f"--mended: no GeoPackage for sheet '{sheet_id}' in {d}\n"
-                f"Looked for '{sheet_id}.gpkg' and any *.gpkg with '{sheet_id}' in the name."
-            )
-        return found
-
-    default = ROOT / cfg["paths"]["outputs"] / f"{sheet_id}.gpkg"
-    available = find_mended(sheet_id, cfg)
-    if available is not None:
-        print(
-            f"\n  ! A mended GeoPackage exists for this sheet:\n"
-            f"      {available}\n"
-            f"    but --mended was not passed, so corrections in it will be IGNORED\n"
-            f"    and training data will come from {default.name} instead.\n"
-            f"    Re-run with --mended to use the corrected layers.\n"
-        )
-    return default
 
 
 # ---------------------------------------------------------------------------
@@ -147,9 +79,9 @@ def _extract_sheet_from_stem(stem: str) -> str:
     """Extract sheet name from a tile filename stem.
 
     Handles:
-      {Sheet}_{col}_{row}.png       — original training tiles
-      {Sheet}_{col}_{row}_fb.png    — feedback tiles
-      {Sheet}_{col}_{row}_ann.png   — annotation tiles
+      {Sheet}_{col}_{row}.png       - original training tiles
+      {Sheet}_{col}_{row}_fb.png    - feedback tiles
+      {Sheet}_{col}_{row}_ann.png   - annotation tiles
     """
     parts = stem.split("_")
     if parts and parts[-1] in ("fb", "ann"):
@@ -211,7 +143,7 @@ def load_or_create_manifest(dataset_dir: Path) -> tuple[list[dict], set[str]]:
         rows = df.to_dict("records")
         print(f"Manifest loaded: {len(rows)} existing entries")
     else:
-        print("manifest.csv not found — bootstrapping from existing training data...")
+        print("manifest.csv not found - bootstrapping from existing training data...")
         rows = bootstrap_manifest(dataset_dir)
         _write_manifest(manifest_path, rows)
         print(f"  Created manifest.csv: {len(rows)} existing tiles catalogued")
@@ -252,7 +184,7 @@ def _rasterize_to_mask(
 ) -> np.ndarray:
     """
     Clip boundary LineStrings to bbox, buffer by line_width_px/2 CRS units,
-    and rasterise onto a (patch_size × patch_size) binary uint8 canvas.
+    and rasterise onto a (patch_size x patch_size) binary uint8 canvas.
     """
     candidates = gdf[gdf.geometry.intersects(bbox)]
     if candidates.empty:
@@ -267,7 +199,7 @@ def _rasterize_to_mask(
     if not clipped_geoms:
         return np.zeros((patch_size, patch_size), dtype=np.uint8)
 
-    # Buffer in CRS units: pixel_size = |tf.a|, buffer = (line_width/2) × pixel_size
+    # Buffer in CRS units: pixel_size = |tf.a|, buffer = (line_width/2) x pixel_size
     buffer_dist = (line_width_px / 2.0) * abs(local_tf.a)
     burn_shapes = [
         (geom.buffer(buffer_dist), 1)
@@ -424,7 +356,7 @@ def main():
             has_georef    = src.crs is not None
             img_transform = src.transform if has_georef else None
     else:
-        print("Warning: raw map not found — assuming non-georeferenced.")
+        print("Warning: raw map not found - assuming non-georeferenced.")
 
     # ---- Patch metadata -----------------------------------------------------
     meta = pd.read_csv(meta_path)
@@ -443,14 +375,14 @@ def main():
         elif pred_exists:
             eligible_fb.append(row)
 
-    print(f"\n── Rasterise feedback ─────────────────────────────────────")
+    print(f"\n-- Rasterise feedback -------------------------------------")
     print(f"Sheet      : {sheet_id}  |  Georef: {has_georef}")
     print(f"Source     : {gpkg_path.name}" + ("   (MENDED)" if args.mended else ""))
     print(f"Feedback   : {len(eligible_fb)} eligible patches "
           f"(predicted, not hand-annotated)")
     print(f"Annotation : {len(eligible_ann)} patches with hand-drawn masks")
     print(f"Boundaries : {len(boundaries_gdf)} features in GeoPackage")
-    print(f"Line width : {line_width}px → buffer {line_width / 2:.1f} "
+    print(f"Line width : {line_width}px -> buffer {line_width / 2:.1f} "
           f"{'CRS units' if has_georef else 'pixels'}")
 
     rng = np.random.default_rng(42)
@@ -459,7 +391,7 @@ def main():
     n_fb_added = n_ann_added = n_existed = 0
 
     # =========================================================================
-    # A) Annotation tiles — split existing 512px hand-drawn masks to 256px tiles
+    # A) Annotation tiles - split existing 512px hand-drawn masks to 256px tiles
     # =========================================================================
     if eligible_ann:
         print(f"\nAdding annotation tiles...")
@@ -483,7 +415,7 @@ def main():
             n_existed   += (pw // tile_size) * (ph // tile_size) - added
 
     # =========================================================================
-    # B) Feedback tiles — rasterise mended vectors onto each eligible patch
+    # B) Feedback tiles - rasterise mended vectors onto each eligible patch
     # =========================================================================
     print(f"\nRasterising feedback patches...")
     for row in tqdm(eligible_fb, unit="patch", desc="Feedback"):
@@ -529,14 +461,14 @@ def main():
             writer.writerows(eligible_records)
 
     # ---- Summary ------------------------------------------------------------
-    print(f"\n── Results ────────────────────────────────────────────────")
+    print(f"\n-- Results ------------------------------------------------")
     print(f"Annotation tiles added : {n_ann_added}")
     print(f"Feedback tiles added   : {n_fb_added}")
     print(f"Already in dataset     : {n_existed}  (skipped)")
     print(f"Manifest total         : {len(all_rows)} entries")
-    print(f"\nManifest  → {(dataset_dir / 'manifest.csv').relative_to(ROOT)}")
+    print(f"\nManifest  -> {(dataset_dir / 'manifest.csv').relative_to(ROOT)}")
     if eligible_records:
-        print(f"Eligible  → {(feedback_dir / 'eligible.csv').relative_to(ROOT)}")
+        print(f"Eligible  -> {(feedback_dir / 'eligible.csv').relative_to(ROOT)}")
     print(f"\nNext step:")
     print(f"  conda activate lines")
     print(f"  python steps/06_feedback/lines/train.py "

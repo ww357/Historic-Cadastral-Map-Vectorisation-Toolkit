@@ -9,9 +9,9 @@ Workflow:
   5. Run THIS script to extract image/mask pairs for feedback fine-tuning
 
 For each corrected polygon this script:
-  • Extracts a 512×512 px patch from the raw TIF centred on the polygon centroid
-  • Rasterises the polygon boundary into a binary mask (0 / 255)
-  • Saves the pair to data/annotations/<feature>/feedback/<sheet>/images/ + masks/
+  - Extracts a 512x512 px patch from the raw TIF centred on the polygon centroid
+  - Rasterises the polygon boundary into a binary mask (0 / 255)
+  - Saves the pair to data/annotations/<feature>/feedback/<sheet>/images/ + masks/
 
 The feedback/ subdirectory separates QGIS-corrected patches from the original
 hand-drawn labelme annotations in data/annotations/<feature>/<sheet>/.
@@ -38,8 +38,10 @@ import numpy as np
 import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
+from common import find_mended, find_raw, resolve_input_gpkg   # noqa: E402
 
-# ── PROJ / rasterio compat ────────────────────────────────────────────────────
+# -- PROJ / rasterio compat ----------------------------------------------------
 if "PROJ_DATA" not in os.environ:
     _env_root = Path(sys.executable).parents[1]
     _cands = [_env_root / "share" / "proj"]
@@ -57,74 +59,13 @@ try:
     import rasterio
     import rasterio.windows
 except ImportError:
-    sys.exit("rasterio required — conda activate polygons")
+    sys.exit("rasterio required - conda activate polygons")
 
 
-# ── Input GeoPackage resolution ───────────────────────────────────────────────
-
-# Raw map formats, in resolution priority (matches patchify.py).
-RAW_EXTENSIONS = (".tif", ".tiff", ".vrt", ".jpg", ".jpeg", ".png")
+# -- Input GeoPackage resolution -----------------------------------------------
 
 
-def find_raw(raw_root: Path, sheet_id: str) -> Path | None:
-    for ext in RAW_EXTENSIONS:
-        p = raw_root / sheet_id / f"{sheet_id}{ext}"
-        if p.exists():
-            return p
-    return None
-
-
-def find_mended(sheet_id: str, cfg: dict) -> Path | None:
-    """Hand-corrected GeoPackage for the sheet in paths.outputs_mended, or None.
-    Exact name first, then any *.gpkg containing the sheet ID (e.g. 'Porlock mended.gpkg')."""
-    d = ROOT / cfg["paths"].get("outputs_mended", "data/mended outputs")
-    if not d.is_dir():
-        return None
-    exact = d / f"{sheet_id}.gpkg"
-    if exact.exists():
-        return exact
-    hits = sorted(p for p in d.glob("*.gpkg") if sheet_id.lower() in p.stem.lower())
-    return hits[0] if hits else None
-
-
-def resolve_input_gpkg(sheet_id: str, cfg: dict, gpkg_arg: str | None,
-                       mended: bool) -> Path:
-    """
-    Pick the GeoPackage to READ the corrected layer from.
-
-    Same rule as every other step: default paths.outputs, --mended switches to
-    paths.outputs_mended, --gpkg overrides both.  If a mended file exists but was
-    not asked for, warn loudly — silently training on the un-mended file would
-    discard the corrections this whole step exists to capture.
-    """
-    if gpkg_arg:
-        p = Path(gpkg_arg)
-        return p if p.is_absolute() else ROOT / p
-
-    if mended:
-        found = find_mended(sheet_id, cfg)
-        if found is None:
-            d = ROOT / cfg["paths"].get("outputs_mended", "data/mended outputs")
-            sys.exit(
-                f"--mended: no GeoPackage for sheet '{sheet_id}' in {d}\n"
-                f"Looked for '{sheet_id}.gpkg' and any *.gpkg with '{sheet_id}' in the name."
-            )
-        return found
-
-    default = ROOT / cfg["paths"]["outputs"] / f"{sheet_id}.gpkg"
-    available = find_mended(sheet_id, cfg)
-    if available is not None:
-        print(
-            f"\n  ! A mended GeoPackage exists for this sheet:\n"
-            f"      {available}\n"
-            f"    but --mended was not passed, so corrections in it will be IGNORED\n"
-            f"    and training data will come from {default.name} instead.\n"
-            f"    Re-run with --mended to use the corrected layers.\n"
-        )
-    return default
-
-
-# ── GeoPackage helpers ────────────────────────────────────────────────────────
+# -- GeoPackage helpers --------------------------------------------------------
 
 def _gpkg_flags(blob: bytes) -> tuple[int, int]:
     """Return (env_type, wkb_start) from a GeoPackage geometry blob header."""
@@ -137,7 +78,7 @@ def _gpkg_flags(blob: bytes) -> tuple[int, int]:
 def parse_wkb_polygon(wkb: bytes) -> list[list[tuple[float, float]]]:
     """
     Parse a WKB Polygon (type 3) or PolygonZ (type 1003) and return a list of
-    rings — each ring is a list of (X, Y) float tuples.  rings[0] = exterior.
+    rings - each ring is a list of (X, Y) float tuples.  rings[0] = exterior.
     Returns [] for non-polygon geometry types.
     """
     endian   = "<" if wkb[0] == 1 else ">"
@@ -203,7 +144,7 @@ def read_polygons_from_gpkg(gpkg_path: Path, layer: str) -> list[dict]:
     return records
 
 
-# ── Geometry helpers ──────────────────────────────────────────────────────────
+# -- Geometry helpers ----------------------------------------------------------
 
 def polygon_centroid(exterior: list[tuple[float, float]]) -> tuple[float, float]:
     """Signed-area centroid via Shoelace formula."""
@@ -226,7 +167,7 @@ def polygon_centroid(exterior: list[tuple[float, float]]) -> tuple[float, float]
 def rings_to_pixel_coords(rings: list[list[tuple[float, float]]],
                            tif_tf, patch_col: int, patch_row: int,
                            patch_size: int) -> list[np.ndarray]:
-    """Convert BNG ring coordinates → pixel coords within the extracted patch."""
+    """Convert BNG ring coordinates -> pixel coords within the extracted patch."""
     px_rings = []
     for ring in rings:
         cols = [(x - tif_tf.c) / tif_tf.a - patch_col for x, _ in ring]
@@ -237,7 +178,7 @@ def rings_to_pixel_coords(rings: list[list[tuple[float, float]]],
     return px_rings
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# -- Main ----------------------------------------------------------------------
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -246,11 +187,11 @@ def main() -> None:
     parser.add_argument("--sheet",    required=True,
                         help="Map sheet name (GeoPackage must exist in outputs/)")
     parser.add_argument("--feature",  required=True,
-                        help="Feature class — must match a layer name in the output "
+                        help="Feature class - must match a layer name in the output "
                              "GeoPackage and the label used in labelme annotations "
                              "(e.g. water, building, vegetation)")
     parser.add_argument("--min-area", type=float, default=None,
-                        help="Skip polygons smaller than this in m² "
+                        help="Skip polygons smaller than this in m2 "
                              "(default: vectorise.features.<feature>.min_area from config, "
                              "or vectorise.features.default.min_area)")
     parser.add_argument("--max-fill", type=float, default=0.80,
@@ -295,7 +236,7 @@ def main() -> None:
     (out_dir / "images").mkdir(parents=True, exist_ok=True)
     (out_dir / "masks").mkdir(parents=True, exist_ok=True)
 
-    # ── Read polygons ─────────────────────────────────────────────────────────
+    # -- Read polygons ---------------------------------------------------------
     print(f"Reading '{args.feature}' layer from {gpkg_path.name} ...")
     try:
         records = read_polygons_from_gpkg(gpkg_path, args.feature)
@@ -303,7 +244,7 @@ def main() -> None:
         sys.exit(str(e))
     print(f"  {len(records)} polygon features found")
 
-    # ── TIF metadata ──────────────────────────────────────────────────────────
+    # -- TIF metadata ----------------------------------------------------------
     with rasterio.open(tif_path) as src:
         tif_tf  = src.transform
         tif_w   = src.width
@@ -320,7 +261,7 @@ def main() -> None:
 
             cx_bng, cy_bng = polygon_centroid(exterior)
 
-            # ── Area filter ───────────────────────────────────────────────────
+            # -- Area filter ---------------------------------------------------
             px_all = [(x - tif_tf.c) / tif_tf.a for x, _ in exterior]
             py_all = [(y - tif_tf.f) / tif_tf.e for _, y in exterior]
             n_ext  = len(exterior)
@@ -334,14 +275,14 @@ def main() -> None:
                 skipped += 1
                 continue
 
-            # ── Patch origin ──────────────────────────────────────────────────
+            # -- Patch origin --------------------------------------------------
             cx_px = (cx_bng - tif_tf.c) / tif_tf.a
             cy_px = (cy_bng - tif_tf.f) / tif_tf.e
 
             patch_col = int(np.clip(round(cx_px - half), 0, tif_w - patch_size))
             patch_row = int(np.clip(round(cy_px - half), 0, tif_h - patch_size))
 
-            # ── Read image patch ──────────────────────────────────────────────
+            # -- Read image patch ----------------------------------------------
             patch    = np.full((patch_size, patch_size, 3), 255, dtype=np.uint8)
             actual_w = min(patch_size, tif_w - patch_col)
             actual_h = min(patch_size, tif_h - patch_row)
@@ -354,7 +295,7 @@ def main() -> None:
                     data = np.stack([grey, grey, grey], axis=0)
                 patch[:actual_h, :actual_w] = np.transpose(data, (1, 2, 0))
 
-            # ── Rasterise mask ────────────────────────────────────────────────
+            # -- Rasterise mask ------------------------------------------------
             mask     = np.zeros((patch_size, patch_size), dtype=np.uint8)
             px_rings = rings_to_pixel_coords(rec["_rings"], tif_tf,
                                               patch_col, patch_row, patch_size)
@@ -362,7 +303,7 @@ def main() -> None:
             for hole in px_rings[1:]:
                 cv2.fillPoly(mask, [hole], 0)
 
-            # ── Fill-fraction filter ──────────────────────────────────────────
+            # -- Fill-fraction filter ------------------------------------------
             fill = float((mask > 0).mean())
             if fill > args.max_fill:
                 skipped += 1
@@ -371,7 +312,7 @@ def main() -> None:
                 skipped += 1
                 continue
 
-            # ── Save ──────────────────────────────────────────────────────────
+            # -- Save ----------------------------------------------------------
             rowid = rec.get("rowid", saved)
             name  = f"{args.feature}_{rowid:06}"
             cv2.imwrite(str(out_dir / "images" / f"{name}.png"), patch)
@@ -392,8 +333,8 @@ def main() -> None:
     meta_path = out_dir / f"{args.feature}_feedback.json"
     meta_path.write_text(json.dumps(meta, indent=2))
 
-    print(f"\nSaved  : {saved} pairs → {out_dir.relative_to(ROOT)}")
-    print(f"Skipped: {skipped} (area < {min_area} m² or fill out of range)")
+    print(f"\nSaved  : {saved} pairs -> {out_dir.relative_to(ROOT)}")
+    print(f"Skipped: {skipped} (area < {min_area} m2 or fill out of range)")
     print(f"Meta   : {meta_path.name}")
     print(
         f"\nNext:  python steps/06_feedback/polygons/train.py "

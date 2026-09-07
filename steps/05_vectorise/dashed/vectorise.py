@@ -1,343 +1,49 @@
 """
 Stitch dashed-line predictions into a full-sheet GeoTIFF, then vectorise to GeoPackage.
 
-Reads  : data/patches/metadata/<SHEET_ID>_patches.csv     — patch offsets + georef
-         data/predictions/dashed/<SHEET_ID>/*.png         — 512px binary masks
-         data/annotations/dashed/<SHEET_ID>/masks/        — annotation masks (fallback,
-                                                             includes confirmed-negative patches)
-         data/raw/<SHEET_ID>/<SHEET_ID>.tif                — source dimensions + CRS
-
-Writes : data/stitched/dashed/<SHEET_ID>.tif              — full-sheet uint8 GeoTIFF
-         data/outputs/<SHEET_ID>.gpkg                     — layer "dashed" (polylines)
-                                                            — layer "dashed_raster" (raster)
-                                                            — layer "Patch_Grid" (rebuilt)
-
-Output target:
-  default   data/outputs/<SHEET_ID>.gpkg
-  --mended  the hand-corrected GeoPackage in paths.outputs_mended, so this layer
-            lands alongside layers already mended in QGIS. Only this script's own
-            layers are replaced; the rest are preserved. Errors if none exists.
-  --gpkg    an explicit path, overriding both.
-
 Same pipeline as steps/05_vectorise/lines/vectorise.py (stitch -> skeletonize ->
 skan polyline trace -> Douglas-Peucker -> optional topology repair -> GeoPackage),
-reusing that module's topology_repair implementation directly rather than
-duplicating it. See that script's docstring for the general method.
+writing the "dashed" / "dashed_raster" layers. Stitching, GeoPackage helpers, and
+topology repair are all shared modules - see that script for the general method.
 
-Known limitation carried over from the model (see config.yaml `dashed:`
-section and models/DashedLineUNet/architecture.py): the model does not yet
-discriminate the annotated dashed line from other faint boundary lines
-sharing a patch, so expect more false-positive traces — and more mending
-time — than the "boundaries" layer, especially in visually cluttered
-patches. dashed.predict_threshold is already tuned toward precision (best-F1
-from a threshold sweep) to reduce this, but it will not eliminate it.
+Known limitation (see config.yaml `dashed:` and models/DashedLineUNet/): the model
+does not discriminate the annotated dashed line from other faint lines sharing a
+patch, so expect more false-positive traces than the "boundaries" layer.
+dashed.predict_threshold is tuned toward precision to reduce this.
+
+Output target: default data/outputs/<SHEET_ID>.gpkg; --mended writes into the
+hand-corrected GeoPackage; --gpkg overrides both.
 
 Usage:
-    conda activate maptools
-    python steps/05_vectorise/dashed/vectorise.py --sheet SHEET_ID
-    python steps/05_vectorise/dashed/vectorise.py --sheet SHEET_ID --mended
+    python vectorise.py --sheet MapSheetName [--mended | --gpkg PATH]
 """
 
 from __future__ import annotations
 
 import argparse
-import sqlite3
 import sys
 from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
-import pandas as pd
 import rasterio
-import yaml
-from osgeo import gdal
-from PIL import Image
-from rasterio.transform import Affine
-from shapely.geometry import LineString, box
+from shapely.geometry import LineString
 from skimage.morphology import skeletonize
 from skan import Skeleton
 from tqdm import tqdm
 
 ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / "steps" / "05_vectorise" / "lines"))  # reuse topology_repair
+sys.path.insert(0, str(ROOT / "steps"))                                 # shared helpers
+sys.path.insert(0, str(ROOT / "steps" / "05_vectorise" / "lines"))     # topology_repair
 
-from topology_repair import repair_topology  # noqa: E402
+from common import load_config, rel_to_root, resolve_output_gpkg   # noqa: E402
+from geopackage import (add_raster_layer, announce_target,          # noqa: E402
+                        drop_vector_layer, write_patch_grid)
+from vectorise_common import stitch                                 # noqa: E402
+from topology_repair import repair_topology                         # noqa: E402
 
 LAYER = "dashed"
 
-
-def load_config() -> dict:
-    p = ROOT / "config.yaml"
-    if not p.exists():
-        sys.exit(f"config.yaml not found at {p}")
-    return yaml.safe_load(p.read_text())
-
-
-# Raw map formats, in resolution priority (matches patchify.py). Used only to
-# read dimensions + georef; falls back to the metadata CSV when absent.
-RAW_EXTENSIONS = (".tif", ".tiff", ".vrt", ".jpg", ".jpeg", ".png")
-
-
-def find_raw(raw_root: Path, sheet_id: str) -> Path | None:
-    for ext in RAW_EXTENSIONS:
-        p = raw_root / sheet_id / f"{sheet_id}{ext}"
-        if p.exists():
-            return p
-    return None
-
-
-def _rel(p: Path) -> str:
-    """Path relative to ROOT for printing, falling back to absolute for --gpkg
-    targets outside the repo."""
-    try:
-        return str(p.relative_to(ROOT))
-    except ValueError:
-        return str(p)
-
-
-def resolve_output_gpkg(sheet_id: str, cfg: dict, gpkg_arg: str | None,
-                        mended: bool) -> Path:
-    """
-    Pick the GeoPackage to write to.
-
-    Default is paths.outputs; --mended switches to paths.outputs_mended; --gpkg
-    overrides both. The target is deliberately never inferred from what happens
-    to exist on disk: this script drops and rewrites its own layers, so silently
-    redirecting into a hand-corrected file would destroy mending.
-    """
-    if gpkg_arg:
-        p = Path(gpkg_arg)
-        return p if p.is_absolute() else ROOT / p
-
-    if not mended:
-        return ROOT / cfg["paths"]["outputs"] / f"{sheet_id}.gpkg"
-
-    mended_dir = ROOT / cfg["paths"].get("outputs_mended", "data/mended outputs")
-    # Mended files are named for the sheet but not always exactly
-    # (e.g. "Porlock mended.gpkg") — same resolution as parcels/predict.py.
-    if mended_dir.exists():
-        exact = mended_dir / f"{sheet_id}.gpkg"
-        if exact.exists():
-            return exact
-        matches = sorted(p for p in mended_dir.glob("*.gpkg")
-                         if sheet_id.lower() in p.stem.lower())
-        if matches:
-            return matches[0]
-
-    sys.exit(
-        f"--mended: no GeoPackage for sheet '{sheet_id}' in {mended_dir}\n"
-        f"Looked for '{sheet_id}.gpkg' and any *.gpkg with '{sheet_id}' in the name.\n"
-        f"Put the mended file there, or drop --mended to write to "
-        f"{cfg['paths']['outputs']}{sheet_id}.gpkg."
-    )
-
-
-def announce_target(out_path: Path, layers: list[str]):
-    print(f"Output GPKG  : {_rel(out_path)}")
-    existing = [n for n in layers if _layer_exists(out_path, n)]
-    if existing:
-        print(f"  Replacing existing layer(s): {', '.join(existing)}")
-
-
-# ---------------------------------------------------------------------------
-# Stitch
-# ---------------------------------------------------------------------------
-
-def stitch(sheet_id: str, cfg: dict) -> tuple[Path, dict]:
-    paths = cfg["paths"]
-
-    raw_path     = find_raw(ROOT / paths["raw"], sheet_id)
-    meta_path    = ROOT / paths["patches"]     / "metadata" / f"{sheet_id}_patches.csv"
-    pred_dir     = ROOT / paths["predictions"] / LAYER / sheet_id
-    ann_mask_dir = ROOT / paths["annotations"] / LAYER / sheet_id / "masks"
-    out_dir      = ROOT / paths["stitched"]    / LAYER
-    out_path     = out_dir / f"{sheet_id}.tif"
-
-    if not meta_path.exists():
-        sys.exit(f"Metadata CSV not found: {meta_path}")
-    if not pred_dir.exists():
-        print(f"Warning: predictions dir not found: {pred_dir}")
-        print("  Annotation masks will be used where available; other patches will be blank.")
-
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    if raw_path is not None:
-        with rasterio.open(raw_path) as src:
-            img_w, img_h = src.width, src.height
-            has_georef   = src.crs is not None
-            crs          = src.crs if has_georef else None
-            transform    = src.transform
-    else:
-        print("Warning: raw map not found, deriving dimensions from metadata.")
-        meta_tmp   = pd.read_csv(meta_path)
-        img_w      = int((meta_tmp["col_off"] + meta_tmp["patch_w"]).max())
-        img_h      = int((meta_tmp["row_off"] + meta_tmp["patch_h"]).max())
-        has_georef = bool(meta_tmp["has_georef"].iloc[0])
-        if has_georef:
-            r0        = meta_tmp[(meta_tmp["row_off"] == 0) & (meta_tmp["col_off"] == 0)].iloc[0]
-            transform = Affine(r0.tf_a, r0.tf_b, r0.tf_c, r0.tf_d, r0.tf_e, r0.tf_f)
-            crs       = meta_tmp["crs"].iloc[0]
-        else:
-            transform, crs = None, None
-
-    print(f"\n-- Stitch --------------------------------------")
-    print(f"Sheet      : {sheet_id}")
-    print(f"Canvas     : {img_w} x {img_h} px  |  CRS: {crs or 'none'}")
-
-    meta   = pd.read_csv(meta_path)
-    canvas = np.zeros((img_h, img_w), dtype=np.uint8)
-
-    missing, from_pred, from_ann = 0, 0, 0
-    for _, row in tqdm(meta.iterrows(), total=len(meta), unit="patch"):
-        pred_path = pred_dir     / f"{row.patch_id}.png"
-        ann_path  = ann_mask_dir / f"{row.patch_id}.png"
-
-        if pred_path.exists():
-            pred = np.array(Image.open(pred_path).convert("L"))
-            from_pred += 1
-        elif ann_path.exists():
-            pred = np.array(Image.open(ann_path).convert("L"))
-            from_ann += 1
-        else:
-            missing += 1
-            continue
-
-        ph, pw = int(row.patch_h), int(row.patch_w)
-        r, c   = int(row.row_off), int(row.col_off)
-        canvas[r:r + ph, c:c + pw] = np.maximum(canvas[r:r + ph, c:c + pw], pred[:ph, :pw])
-
-    placed = from_pred + from_ann
-    print(f"Placed {placed} patches  "
-          f"({from_pred} predicted, {from_ann} from annotations, {missing} missing)")
-
-    profile = {"driver": "GTiff", "dtype": "uint8", "width": img_w,
-               "height": img_h, "count": 1, "compress": "lzw"}
-    if has_georef and crs is not None:
-        profile["crs"]       = crs
-        profile["transform"] = transform
-
-    with rasterio.open(out_path, "w", **profile) as dst:
-        dst.write(canvas[np.newaxis, :, :])
-
-    print(f"Stitched -> {out_path.relative_to(ROOT)}")
-    print(f"  Dashed-line pixels: {(canvas > 0).sum():,}  "
-          f"({100 * (canvas > 0).mean():.2f}% of image)")
-
-    return out_path, {"transform": transform, "crs": crs, "has_georef": has_georef}
-
-
-# ---------------------------------------------------------------------------
-# GeoPackage helpers (duplicated from lines/vectorise.py by convention —
-# each vectorise script owns its own copy; see that script for rationale)
-# ---------------------------------------------------------------------------
-
-def _layer_exists(gpkg_path: Path, layer_name: str) -> bool:
-    if not gpkg_path.exists():
-        return False
-    con = sqlite3.connect(gpkg_path)
-    try:
-        cur = con.execute("SELECT 1 FROM gpkg_contents WHERE table_name = ?", (layer_name,))
-        return cur.fetchone() is not None
-    except sqlite3.OperationalError:
-        return False
-    finally:
-        con.close()
-
-
-def _drop_vector_layer(gpkg_path: Path, layer_name: str):
-    if not gpkg_path.exists():
-        return
-    con = sqlite3.connect(gpkg_path)
-    try:
-        con.execute("DELETE FROM gpkg_contents WHERE table_name = ?",         (layer_name,))
-        con.execute("DELETE FROM gpkg_geometry_columns WHERE table_name = ?", (layer_name,))
-        con.execute(f"DROP TABLE IF EXISTS [{layer_name}]")
-        con.commit()
-    except sqlite3.OperationalError:
-        pass
-    finally:
-        con.close()
-
-
-def _drop_raster_layer(gpkg_path: Path, table_name: str):
-    if not gpkg_path.exists():
-        return
-    con = sqlite3.connect(gpkg_path)
-    try:
-        con.execute("DELETE FROM gpkg_contents WHERE table_name = ?",        (table_name,))
-        con.execute("DELETE FROM gpkg_tile_matrix_set WHERE table_name = ?", (table_name,))
-        con.execute("DELETE FROM gpkg_tile_matrix WHERE table_name = ?",     (table_name,))
-        con.execute(f"DROP TABLE IF EXISTS [{table_name}]")
-        con.commit()
-    except sqlite3.OperationalError:
-        pass
-    finally:
-        con.close()
-
-
-def _add_raster_layer(stitched_path: Path, gpkg_path: Path, layer_name: str):
-    _drop_raster_layer(gpkg_path, layer_name)
-    src = gdal.Open(str(stitched_path))
-    if src is None:
-        print(f"Warning: GDAL could not open {stitched_path} — raster layer skipped.")
-        return
-    gdal.Translate(str(gpkg_path), src, format="GPKG",
-                   creationOptions=[f"RASTER_TABLE={layer_name}", "APPEND_SUBDATASET=YES"])
-    src = None
-
-
-def _write_patch_grid(gpkg_path: Path, meta_path: Path, transform,
-                      crs, has_georef: bool, sheet_id: str, cfg: dict):
-    """Rebuild the Patch_Grid layer every run so annotation columns stay current."""
-    _drop_vector_layer(gpkg_path, "Patch_Grid")
-    if not meta_path.exists():
-        print("  Patch_Grid: metadata CSV not found — skipping.")
-        return
-
-    ann_root = ROOT / cfg["paths"]["annotations"]
-    feature_mask_dirs: dict[str, Path] = {}
-    if ann_root.exists():
-        for feat_dir in sorted(ann_root.iterdir()):
-            if not feat_dir.is_dir():
-                continue
-            mask_dir = feat_dir / sheet_id / "masks"
-            if mask_dir.exists():
-                feature_mask_dirs[feat_dir.name] = mask_dir
-
-    meta = pd.read_csv(meta_path)
-    rectangles = []
-    for _, row in meta.iterrows():
-        r, c, ph, pw = int(row.row_off), int(row.col_off), int(row.patch_h), int(row.patch_w)
-        if has_georef:
-            x0, y0 = transform * (c,      r)
-            x1, y1 = transform * (c + pw, r + ph)
-            geom = box(min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
-        else:
-            geom = box(c, r, c + pw, r + ph)
-
-        rec = {"patch_id": row.patch_id, "sheet_id": sheet_id, "geometry": geom}
-
-        annotated = []
-        for feature, mask_dir in feature_mask_dirs.items():
-            has_ann = (mask_dir / f"{row.patch_id}.png").exists()
-            rec[f"ann_{feature}"] = has_ann
-            if has_ann:
-                annotated.append(feature)
-
-        rec["annotated_features"] = ", ".join(annotated)
-        rectangles.append(rec)
-
-    grid_gdf = gpd.GeoDataFrame(rectangles, crs=crs if has_georef else None)
-    write_mode = "a" if gpkg_path.exists() else "w"
-    grid_gdf.to_file(gpkg_path, driver="GPKG", layer="Patch_Grid", mode=write_mode)
-    ann_cols = [f"ann_{f}" for f in feature_mask_dirs] or ["(none)"]
-    print(f"  Patch_Grid (vector):  {len(grid_gdf):,} patches  |  "
-          f"annotation columns: {', '.join(ann_cols)}")
-
-
-# ---------------------------------------------------------------------------
-# Vectorise
-# ---------------------------------------------------------------------------
 
 def pixel_to_world(rows, cols, transform) -> list[tuple]:
     xs, ys = rasterio.transform.xy(transform, rows, cols)
@@ -364,7 +70,7 @@ def extract_polylines(skeleton: np.ndarray, transform, has_georef: bool,
 
 
 def vectorise(sheet_id: str, cfg: dict, stitched_path: Path, georef: dict,
-              out_path: Path):
+              out_path: Path) -> None:
     vcfg         = cfg["vectorise"][LAYER]
     simplify_tol = float(vcfg["simplify_tolerance"])
     min_length   = float(vcfg["min_length"])
@@ -374,16 +80,14 @@ def vectorise(sheet_id: str, cfg: dict, stitched_path: Path, georef: dict,
     meta_path = ROOT / cfg["paths"]["patches"] / "metadata" / f"{sheet_id}_patches.csv"
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    transform  = georef["transform"]
-    crs        = georef["crs"]
-    has_georef = georef["has_georef"]
+    transform, crs, has_georef = georef["transform"], georef["crs"], georef["has_georef"]
 
     with rasterio.open(stitched_path) as src:
         mask = src.read(1)
 
-    print(f"\n-- Vectorise -------------------------------------")
+    print(f"\n-- Vectorise -----------------------------------")
     print(f"Mask         : {mask.shape[1]} x {mask.shape[0]} px  "
-          f"|  dashed-line pixels: {(mask > 0).sum():,}")
+          f"|  {LAYER} pixels: {(mask > 0).sum():,}")
     print(f"CRS          : {crs or 'none (pixel coords)'}")
     print(f"Simplify tol : {simplify_tol}  |  min length: {min_length}")
     announce_target(out_path, [LAYER, f"{LAYER}_raster", "Patch_Grid"])
@@ -398,7 +102,7 @@ def vectorise(sheet_id: str, cfg: dict, stitched_path: Path, georef: dict,
     print(f"Polylines after filtering: {len(lines):,}")
 
     if not lines:
-        print("Warning: no polylines produced — check mask and config thresholds.")
+        print("Warning: no polylines produced - check mask and config thresholds.")
         return
 
     gdf = gpd.GeoDataFrame(
@@ -418,37 +122,31 @@ def vectorise(sheet_id: str, cfg: dict, stitched_path: Path, georef: dict,
         n_bridges = int(gdf["is_bridge"].sum())
         print(f"  {n_bridges} bridge segment(s) added")
 
-    _drop_vector_layer(out_path, LAYER)
+    drop_vector_layer(out_path, LAYER)
     write_mode = "a" if out_path.exists() else "w"
     gdf.to_file(out_path, driver="GPKG", layer=LAYER, mode=write_mode)
-    print(f"\nSaved -> {_rel(out_path)}")
+    print(f"\nSaved -> {rel_to_root(out_path)}")
     print(f"  {LAYER} (vector):  {len(gdf):,} features  |  "
           f"total length: {gdf['length'].sum():,.1f} map units"
           + (f"  ({int(gdf['is_bridge'].sum())} bridges)" if do_repair else ""))
 
     print("  Adding raster layer...")
-    _add_raster_layer(stitched_path, out_path, f"{LAYER}_raster")
+    add_raster_layer(stitched_path, out_path, f"{LAYER}_raster")
     print(f"  {LAYER}_raster (raster): done")
 
-    _write_patch_grid(out_path, meta_path, transform, crs, has_georef, sheet_id, cfg)
+    write_patch_grid(out_path, meta_path, transform, crs, has_georef, sheet_id, cfg)
 
     # No feedback loop for dashed yet (the model is pooled across sheets, not
-    # per-sheet fine-tuned) — the useful onward step is parcel extraction, which
-    # can now use these dashed lines as an extra wall.
+    # per-sheet fine-tuned) - the useful onward step is parcel extraction, which
+    # can use these dashed lines as an extra wall.
     print(
-        f"\nNext step: mend the '{LAYER}' layer in QGIS. To use it as a parcel "
-        f"boundary:\n"
+        f"\nNext step: mend the '{LAYER}' layer in QGIS. To use it as a parcel boundary:\n"
         f"  conda activate polygons\n"
-        f"  python steps/04_predict/parcels/predict.py --sheet {sheet_id} "
-        f"--extent boundaries dashed"
+        f"  python steps/04_predict/parcels/predict.py --sheet {sheet_id} --extent boundaries dashed"
     )
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Stitch dashed-line predictions and vectorise to GeoPackage."
     )
@@ -456,17 +154,14 @@ def main():
     target = parser.add_mutually_exclusive_group()
     target.add_argument("--mended", action="store_true",
                         help="Write into the hand-corrected GeoPackage in "
-                             "paths.outputs_mended instead of paths.outputs. Only this "
-                             "step's own layers are replaced; other mended layers are "
-                             "preserved. Errors if no mended file exists for the sheet.")
+                             "paths.outputs_mended instead of paths.outputs.")
     target.add_argument("--gpkg", default=None,
-                        help="Explicit output GeoPackage path (overrides --mended "
-                             "and the default).")
+                        help="Explicit output GeoPackage path (overrides --mended and the default).")
     args = parser.parse_args()
 
     cfg = load_config()
     out_path = resolve_output_gpkg(args.sheet, cfg, args.gpkg, args.mended)
-    stitched_path, georef = stitch(args.sheet, cfg)
+    stitched_path, georef = stitch(args.sheet, cfg, LAYER, LAYER, LAYER, LAYER)
     vectorise(args.sheet, cfg, stitched_path, georef, out_path)
 
 
