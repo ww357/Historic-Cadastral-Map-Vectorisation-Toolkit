@@ -1,13 +1,12 @@
 # -----------------------------------------------------------------------------
 # Cadastral Map Vectorisation Toolkit - pipeline configuration
 #
-# Every step reads this file from the repo root. Values are grouped by the step
-# that uses them. Metric thresholds (simplify_tolerance, min_length, min_area,
-# the parcel size cap) are in linear CRS units - metres in any projected CRS,
-# pixels for ungeoreferenced sheets.
+# All paths are relative to the repo root.
+# Values are grouped by the pipeline step that uses them.
+# Metric thresholds use linear CRS units (typically metres).
 # -----------------------------------------------------------------------------
 
-# Data and model directories, all relative to the repo root.
+# Data and model directories
 paths:
   raw:              data/raw/
   masks:            data/map_area_masks/
@@ -22,86 +21,70 @@ paths:
   logs:             models/logs/
   parcel_points:    data/parcel_points/
 
-# Optional ingest step (steps/01_patchify/reproject.py) that warps a georeferenced
-# map to a tiled GeoTIFF in the target CRS at data/raw/<sheet>/<sheet>.tif (which
-# find_raw then prefers over the source). Run it before patchify for maps not
-# already in a projected metre CRS at the training scale - e.g. WGS84/degree scans
-# (patchify errors on a degree CRS). target_crs may be any projected metre CRS
-# (BNG, UTM, Irish Grid, ...); ungeoreferenced inputs have no CRS and are skipped.
+
+# Optional: reproject georeferenced maps before patchification.
+# Required for inputs whose CRS is not a projected metre-based CRS.
 reproject:
   target_crs: EPSG:27700   # default British National Grid (metres); set to your CRS if different
   resolution: 0.5          # metres per pixel - matches the ~0.5 m/px training data
-  resampling: bilinear     # nearest | bilinear | cubic | lanczos | average
+  resampling: bilinear     # options: nearest,  bilinear,  cubic,  lanczos, average
 
-# Slicing the raw map into patches (steps/01_patchify/patchify.py).
+# Slicing raw map into patches
 patchify:
-  patch_size:        512    # px - boundaries/MapSAM use 512px patches directly;
-                            #   the text model stitches 2x2 patches to 1024px before inference
+  patch_size:        512    # px - MapSAM use 512px patches directly
   overlap:           0      # px between adjacent patches
-  min_mask_coverage: 0.01   # fraction of a patch that must fall within the mask (0.01 = 1%)
+  min_mask_coverage: 0.01   # fraction of a patch inside the mask (0.01 = 1%)
   pad_value:         255    # fill value for edge patches (255 = white)
 
-# Boundary-line U-Net (steps/03_finetune/lines, steps/04_predict/lines).
+# Boundary-line U-Net
 unet:
-  inference_size: 256    # model input size; 512px patches are split into a 2x2 grid of
-                         #   256px tiles (4 total) - matches training resolution exactly, no downsampling
+  inference_size: 256    # 512px patches are split into 2x2 256px tiles
   image_channels: 1      # grayscale
   loss_type:      combined_focal_cldice
-  threshold:      0.95   # from threshold calibration on the validation set
+  threshold:      0.95   # Calibrated on the validation set
   batch_size:     4
 
-# Dashed-line U-Net (EfficientNetB0 encoder regressing a Gaussian heatmap) for
-# dashed/gappy boundary lines - see models/DashedLineUNet/. Trained POOLED across
-# all annotated sheets (not per-sheet), since the dataset is small enough that a
-# single cross-sheet model was what was actually validated.
+# Dashed-line U-Net using an EfficientNetB0 encoder and Gaussian heatmap target.
+# Trained as one pooled model across all annotated sheets.
 dashed:
-  img_size:            512    # native patch size - no 2x2 tiling, unlike unet.inference_size
-  sigma:               8      # Gaussian blur (px) on the annotated linestrip to make the regression
-                              #   target - a continuous target is what lets the model bridge ink gaps
-  foreground_weight:   15.0   # up-weights on-line pixels in the loss (see architecture.py); without
-                              #   it the model collapses to predicting near-zero everywhere
-  unfreeze_from_layer: block6a_expand_activation   # Phase 2 fine-tunes from here up; earlier,
-                                                    #   more generic encoder blocks stay frozen
+  img_size:            512    # native patch size
+  sigma:               8      # Gaussian blur radius in pixels
+  foreground_weight:   15.0   # Loss weight for on-line pixels
+  unfreeze_from_layer: block6a_expand_activation   # Start on Phase 2 unfreezing
   batch_size:          4
-  batch_size_finetune: 2      # Phase 2 (partial unfreeze) batch size - OOM guard
+  batch_size_finetune: 2      # Phase 2 batch size; reduced to avoid OOM
   epochs:              60
   learning_rate:       0.0001
-  finetune_lr_divisor: 50     # Phase 2 learning rate = learning_rate / this
+  finetune_lr_divisor: 50     # Phase 2 LR = learning_rate / this
   val_split:           0.15
   seed:                42
-  predict_threshold:   0.70   # from a threshold sweep (best F1 ~ 0.59, P ~ 0.60, R ~ 0.69).
-                              #   Known limitation: detects on-line pixels well but does not yet
-                              #   discriminate the dashed line from other faint lines in a cluttered
-                              #   patch - expect more mending than the "boundaries" layer for now.
+  predict_threshold:   0.70   # Threshold sweep; best F1 ~0.59
 
-# Vectorising stitched prediction rasters to GeoPackage layers (steps/05_vectorise).
+# Vectorising stitched prediction rasters to GeoPackage layers.
 vectorise:
   boundaries:
-    simplify_tolerance: 2.0    # Douglas-Peucker tolerance in CRS units. Increase to generalise more.
-    min_length:         10.0   # discard lines shorter than this (same units)
+    simplify_tolerance: 2.0    # Douglas-Peucker tolerance in CRS units
+    min_length:         10.0   # discard lines shorter than this
     topology_repair:
-      enabled:         false   # set true to add bridging segments after vectorisation
-      snap_distance:   15.0    # maximum gap to bridge, in CRS units. Keep conservative -
-                               #   a good starting point is 3-5x simplify_tolerance
-      angle_tolerance: null    # degrees; null = bridge any nearby endpoint pair.
-                               #   Set e.g. 25 to restrict to roughly collinear lines only
+      enabled:         false   # Add bridging segments after vectorisation
+      snap_distance:   15.0    # maximum gap to bridge, in CRS units
+      angle_tolerance: null    # null = any nearby endpoint pair; degrees otherwise
                                #   (avoids bridging two unrelated boundaries at a corner)
+                               #   e.g. 25 to restrict to roughly collinear lines only
   dashed:
     simplify_tolerance: 2.0
     min_length:         10.0
     topology_repair:
-      enabled:         false   # dashed lines are gappy by definition - worth trying true if the
-                               #   raw traced output still looks broken after mending a sheet or two
+      enabled:         false   # Enable if traced output remains too fragmented
       snap_distance:   15.0
       angle_tolerance: null
 
-  # MapSAM polygon features - any label becomes its own class. A per-feature entry
-  # takes precedence; "default" is used when no specific entry exists.
+  #MapSAM polygon features. Specific entries override "default".
   features:
     default:
       simplify_tolerance: 2.0    # Douglas-Peucker tolerance in CRS units
       min_area:           25.0   # discard polygons smaller than this (same units squared)
-    # Per-feature overrides - uncomment and adjust as needed:
+    # Per-feature overrides - uncomment and adjust as needed. e.g.
     # water:
     #   simplify_tolerance: 3.0
     #   min_area: 50.0
@@ -109,74 +92,132 @@ vectorise:
     #   simplify_tolerance: 1.0
     #   min_area: 10.0
 
-# MapSAM feature segmentation (SAM ViT-B + DoRA adapters).
-# No per-feature config: the feature name comes from the --feature CLI argument and
-# weights are resolved automatically -
+# ---------------------------------------------------------------------------
+# MapSAM feature segmentation
+# ---------------------------------------------------------------------------
+# SAM ViT-B with DoRA adapters.
+#
+# No per-feature configuration is required. The feature name is supplied via
+# the --feature CLI argument, and weights are resolved automatically in this
+# order:
 #   1. models/finetuned/mapsam_<feature>*_best.pth
 #   2. models/base/MapSAM/<feature>/          (feature-specific base weights)
 #   3. models/base/MapSAM/original_weights/   (generic SAM DoRA fallback)
-# Annotation data is read from data/annotations/<feature>/<sheet>/.
+#
+# Annotation data is read from:
 mapsam:
   vit_name:           vit_b
   img_size:           512
   num_classes:        1
-  rank:               4     # DoRA rank - must match the value used when base weights were trained
-  dice_param:         0.8   # dice vs focal weight in the combined loss (0.8 = 80% dice, 20% focal)
-  predict_threshold:  0.5   # sigmoid threshold for the binary mask during inference
-  predict_batch_size: 4     # patches per GPU forward pass; reduce to 1-2 if OOM
+  # DoRA configuration
+  # Must match the rank used when the base weights were trained
+  rank:               4
+  #combined loss weighting
+  #0.8 = 80% dice, 20% focal
+  dice_param:         0.8
+  # Binary mask threshold applied to sigmoid predictions during inference.
+  predict_threshold:  0.5
+  # Number of patches processed per GPU forward pass.
+  # Reduce to 1-2 if you encounter CUDA out-of-memory errors.
+  predict_batch_size: 4
+
   finetune:
     epochs:                  30
-    batch_size:              2        # safe for ~4 GB GPU at 512px SAM ViT-B; reduce to 1 if OOM
-    learning_rate:           0.0001   # much lower than base training (0.005) - nudge existing weights
+    batch_size:              2        # Safe for ~4 GB GPU at 512px with SAM ViT-B; reduce to 1 if OOM.
+    learning_rate:           0.0001   # Lower than base training (0.005); fine-tuning makes only small weight updates.
     val_split:               0.15
     early_stopping_patience: 10
     seed:                    1234
 
-# Boundary U-Net fine-tuning (steps/03_finetune/lines/train.py).
+# ---------------------------------------------------------------------------
+# Boundary U-Net fine-tuning
+# ---------------------------------------------------------------------------
+# Implemented by steps/03_finetune/lines/train.py.
 finetune:
   epochs:                  50
-  learning_rate:           0.0001   # lower than build_model default (1e-3) for fine-tuning
-  val_split:               0.15     # fraction of patches held out for validation
-  apl_tau:                 3        # coverage tolerance in pixels for APL / path-F1
-  max_val_tiles:           200      # cap validation tiles per epoch for speed
-  early_stopping_patience: 10       # stop if path_f1 doesn't improve for this many epochs
-  # checkpoint_metric is always path_f1 (documented here, not configurable).
+  learning_rate:           0.0001   # Lower than the build_model default (1e-3) for fine-tuning.
+  val_split:               0.15     # Fraction of patches held out for validation.
+  apl_tau:                 3        # Coverage tolerance in pixels for APL / Path-F1.
+  max_val_tiles:           200      # Maximum validation tiles evaluated per epoch.
+  early_stopping_patience: 10       # Stop if Path-F1 fails to improve for this many epochs.
 
-# Boundary feedback fine-tuning (step 06) - runs AFTER mending in QGIS.
-# Run lines/prepare.py (maptools) then lines/train.py (lines).
+  # The checkpoint metric is always Path-F1 and is intentionally not configurable.
+
+
+# ---------------------------------------------------------------------------
+# Boundary feedback fine-tuning
+# ---------------------------------------------------------------------------
+# Step 06, run AFTER mending in QGIS.
+#
+# Before training:
+#   1. Run lines/prepare.py (maptools).
+#   2. Run lines/train.py (lines).
+#
+# Feedback tiles are combined with a replay pool of ground-truth tiles.
 feedback:
-  replay_ratio:            0.4      # fraction of each batch from the ground-truth replay pool
-                                    #   (0.4 = 40% GT tiles, 60% feedback tiles)
-  feedback_loss_weight:    0.8      # loss weight for pseudo-label tiles (ground-truth = 1.0) -
-                                    #   reduces the influence of any uncorrected prediction errors
-  freeze_encoder_blocks:   2        # freeze first N of 4 encoder stages (0 = none, 4 = all).
-                                    #   Blocks 1-2 encode low-level edge/texture features; freezing
-                                    #   them preserves cross-map generalisability
-  learning_rate:           1.0e-5   # much lower than the initial fine-tune (1e-4) - a small nudge only
-  epochs:                  20
-  early_stopping_patience: 5        # stops when cross-sheet Path-F1 stops improving
-  max_val_tiles:           200      # cap on validation tiles evaluated per epoch
+  replay_ratio:            0.4      # 40% ground-truth replay tiles + 60% feedback tiles per batch.
+  feedback_loss_weight:    0.8      # Pseudo-label loss weight; ground-truth tiles use a weight of 1.0.
 
-# Annotation export (steps/02_annotate/export_masks.py).
-# Every unique label drawn in labelme becomes its own feature class - the label
-# name is used directly as the annotations subfolder (e.g. "water" -> annotations/water/).
-# boundary_label is the one label rendered as a linestrip; all others are filled polygons.
+  # Freeze the first N of the 4 encoder stages.
+  #   0 = freeze none
+  #   4 = freeze all
+  #
+  # The first two stages primarily learn low-level edge/texture features.
+  # Freezing them helps preserve cross-map generalisability.
+  freeze_encoder_blocks:   2
+
+  learning_rate:            1.0e-5   # Much lower than initial fine-tuning (1e-4); only a small weight update.
+  epochs:                   20
+  early_stopping_patience:  5        # Stop when cross-sheet Path-F1 stops improving.
+  max_val_tiles:            200      # Maximum validation tiles evaluated per epoch.
+
+
+# ---------------------------------------------------------------------------
+# Annotation export
+# ---------------------------------------------------------------------------
+# Implemented by steps/02_annotate/export_masks.py.
+#
+# Every unique LabelMe label becomes its own feature class. 
+# The label name is used directly as the annotations subfolder:
+#
+#   water -> data/annotations/water/
+#
+# boundary_label is rendered as a linestrip. All other labels are rendered as filled polygons.
 annotation:
   boundary_label: boundary
-  line_width:     3    # px width used when rendering linestrip annotations into masks
+  line_width:     3    # Pixel width used when rendering linestrip annotations into masks.
 
-# Point-seeded watershed parcel extraction (ACTIVE method - no model training).
-# steps/04_predict/parcels/predict.py  +  steps/05_vectorise/parcels/vectorise.py
-# Consumes the full-sheet boundary raster the lines pipeline produces plus the
-# apportionment centroid points, then partitions the sheet with a marker-controlled
-# watershed: each point is a seed, the (smoothed) boundary lines are ridges, and
-# every pixel is assigned to its enclosing parcel. Extent is defined by the lines,
-# so it handles wildly different parcel sizes natively, and N points -> N parcels.
+
+# ---------------------------------------------------------------------------
+# Point-seeded watershed parcel extraction
+# ---------------------------------------------------------------------------
+# ACTIVE parcel extraction method — no model training required.
+
+# Implemented by:
+#   steps/04_predict/parcels/predict.py
+#   steps/05_vectorise/parcels/vectorise.py
+
+# Inputs:
+#   - Full-sheet boundary raster produced by the lines pipeline.
+#   - Apportionment centroid points.
+
+# Method:
+#   A marker-controlled watershed is used to partition the sheet:
+#   - Each centroid point acts as a seed.
+#   - Smoothed boundary lines act as watershed ridges.
+#   - Each pixel is assigned to its enclosing parcel.
+
+# Parcel extent is determined by the boundary lines, so parcel size can vary
+# substantially without requiring any additional configuration.
+
+
+
+
+# With N input points, the method produces N parcels.
 parcels:
-  points_file: apportionment_points.gpkg   # filename within paths.parcel_points/ - set per project.
-                                           #   A per-sheet file (e.g. <sheet>_points.gpkg) is picked
-                                           #   up automatically and takes precedence over this default.
-
+  points_file: apportionment_points.gpkg   # Default filename within paths.parcel_points/.
+                                           # A per-sheet file (e.g. <sheet>_points.gpkg)
+                                           # takes precedence when present.
   # Watershed surface shaping - bridges the dashed/gappy boundaries that defeat
   # strict polygonisation. The seeds supply closure; the lines only bias where
   # adjacent parcels are cut apart.
@@ -235,33 +276,3 @@ text:
   device:   default    # "cuda", "cpu", or "default" (auto-selects cuda if available)
   # The confidence threshold lives in cfg_file (TRANSFORMER.INFERENCE_TH_TEST: 0.4).
   # Weight search order: --weights -> models/base/MapTextPipeline/*.pth -> models/finetuned/*text*.pth
-
-# -----------------------------------------------------------------------------
-# ARCHIVED: point-prompted SAM parcel approach (superseded by the watershed above).
-# Kept for reference only - scripts live in temp/sam_parcels/ and no active script
-# reads these keys. To revive, restore temp/sam_parcels/* and rename these keys back
-# to `parcels:` / `parcel_finetune:`.
-# -----------------------------------------------------------------------------
-sam_parcels_archived:
-  points_file:       apportionment_points.gpkg
-  tile_size:         1024
-  sam_input_size:    1024
-  overlap:           128
-  min_area:          50.0
-  simplify_tolerance: 1.0
-  max_neg_points:    6
-  adaptive_scale:    true
-  border_margin_px:  4
-  adaptive_max_fill: 0.80
-
-parcel_finetune_archived:
-  epochs:                  40
-  batch_size:              1
-  learning_rate:           0.00005
-  val_split:               0.15
-  early_stopping_patience: 12
-  seed:                    1234
-  replay_ratio:            0.4
-  min_zoom_area_px:        1500
-  neg_points:              0
-  neg_ring_px:             48
