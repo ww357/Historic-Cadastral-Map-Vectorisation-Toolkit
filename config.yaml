@@ -187,6 +187,22 @@ annotation:
   boundary_label: boundary
   line_width:     3    # Pixel width used when rendering linestrip annotations into masks.
 
+# Optional pre-drawing of boundary linestrips before annotating (02_annotate/autolines.py).
+# Classical threshold + skeleton, no ML. Tune with --preview. Units are pixels unless noted.
+autolines:
+  tophat_radius: 7      # keeps dark features thinner than this; should exceed half the widest line
+  low:           0.08   # hysteresis low  threshold (darkness above local paper, 0-1)
+  high:          0.20   # hysteresis high threshold
+  min_size:      20     # drop ink blobs smaller than this before skeletonising
+  min_length:    50     # drop line networks shorter than this (text, numerals, specks)
+  min_extent:    40     # drop networks whose longest side is shorter than this
+  spur_length:   25     # drop short branches dangling off a junction
+  loop_length:   60     # drop small closed loops hanging off a junction (tree symbols)
+  simplify:      1.5    # Douglas-Peucker tolerance
+  density_window: 25    # window for measuring local ink density
+  max_density:   0.40   # drop skeleton in areas denser than this (tree/woodland symbols); 1 = off
+  mask_erode:    6      # pull the map-area mask in so the neatline is not traced
+
 
 # ---------------------------------------------------------------------------
 # Point-seeded watershed parcel extraction

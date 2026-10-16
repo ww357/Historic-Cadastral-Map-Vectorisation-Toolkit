@@ -216,7 +216,9 @@ def patchify(sheet_id: str, require_mask: bool, repo_root: Path):
     print(
         f"\nNext step: annotate a sample of patches in labelme\n"
         f"  conda activate maptools\n"
-        f"  python steps/02_annotate/annotate.py --sheet {sheet_id}"
+        f"  python steps/02_annotate/annotate.py --sheet {sheet_id}\n"
+        f"Optional first (pre-draws boundary lines for you to edit instead of tracing):\n"
+        f"  python steps/02_annotate/autolines.py --sheet {sheet_id} --preview --limit 8"
     )
 
 
