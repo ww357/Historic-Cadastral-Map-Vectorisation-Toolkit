@@ -32,12 +32,12 @@ ROOT = Path(__file__).resolve().parents[1]
 WEIGHTS = {
     "unet": {
         "repo": "ww357/Improved-Linear-U-Net",
-        "dest": "models/base/unet",
+        "dest": "models/base/solid_lines_unet",
         "note": "boundary U-Net base weights (*.weights.h5)",
     },
     "dashed": {
         "repo": "ww357/DashedLineUNet",
-        "dest": "models/base/dashed",
+        "dest": "models/base/dashed_unet",
         "note": "dashed-line U-Net base weights (*.h5)",
     },
     "mapsam": {

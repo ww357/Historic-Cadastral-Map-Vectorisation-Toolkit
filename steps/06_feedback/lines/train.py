@@ -58,11 +58,11 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
-from models.ImprovedLinearUNet.architecture import (
+from models.SolidLineUNet.architecture import (
     build_model, LOSS_MAP, dsc, clDice, tp, tn, prec, recall,
 )
-from models.ImprovedLinearUNet.augmentation import BoundaryAugmentation
-from models.ImprovedLinearUNet.metrics import compute_path_metrics, MENDING_C, MENDING_K
+from models.SolidLineUNet.augmentation import BoundaryAugmentation
+from models.SolidLineUNet.metrics import compute_path_metrics, MENDING_C, MENDING_K
 
 import tensorflow as tf
 from tensorflow.keras.optimizers import Adam

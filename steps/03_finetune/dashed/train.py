@@ -24,7 +24,7 @@ Data expected
 
 Outputs
 -------
-    models/base/dashed/best.weights.h5    - base weights (auto-selected by predict.py)
+    models/base/dashed_unet/best.weights.h5    - base weights (auto-selected by predict.py)
     models/logs/dashed_pretrain_metrics.csv
     models/logs/dashed_training_curves.png
 
@@ -207,7 +207,7 @@ def main():
     model, backbone = build_unet(img_size=img_size)
     loss_fn = make_combined_loss(float(dcfg["foreground_weight"]))
 
-    out_dir = ROOT / cfg["paths"]["models_base"] / "dashed"
+    out_dir = ROOT / cfg["paths"]["models_base"] / "dashed_unet"
     logs_dir = ROOT / cfg["paths"]["logs"]
     out_dir.mkdir(parents=True, exist_ok=True)
     logs_dir.mkdir(parents=True, exist_ok=True)

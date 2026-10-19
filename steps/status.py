@@ -120,7 +120,7 @@ def gather(sheet: str, cfg: dict) -> dict:
     }
     weights = {
         "lines":  (fin / "working" / f"{sheet}_best.weights.h5").exists(),
-        "dashed": bool(list((ROOT / paths["models_base"] / "dashed").glob("*.h5"))),
+        "dashed": bool(list((ROOT / paths["models_base"] / "dashed_unet").glob("*.h5"))),
         "mapsam": mapsam_weights,
     }
 
@@ -212,7 +212,7 @@ def print_report(s: dict) -> None:
     if w["lines"]:
         bits.append(f"lines: working/{sheet}_best.weights.h5")
     if w["dashed"]:
-        bits.append("dashed: base/dashed (pooled)")
+        bits.append("dashed: base/dashed_unet (pooled)")
     bits += [f"{f}: {n}" for f, n in w["mapsam"].items()]
     print(f"  03 finetune  {TICK if bits else CROSS}" + ("  " + "\n" + " " * 15 + ("\n" + " " * 15).join(bits) if bits else ""))
 

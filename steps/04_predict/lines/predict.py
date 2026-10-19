@@ -33,7 +33,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
 from common import load_config   # noqa: E402
 
-from models.ImprovedLinearUNet.architecture import build_model
+from models.SolidLineUNet.architecture import build_model
 
 
 def split_patch(arr: np.ndarray, sub_size: int) -> tuple[list[np.ndarray], list[tuple]]:

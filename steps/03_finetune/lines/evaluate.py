@@ -34,8 +34,8 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
-from models.ImprovedLinearUNet.architecture import build_model
-from models.ImprovedLinearUNet.metrics import compute_path_metrics, MENDING_C, MENDING_K
+from models.SolidLineUNet.architecture import build_model
+from models.SolidLineUNet.metrics import compute_path_metrics, MENDING_C, MENDING_K
 
 import tensorflow as tf
 

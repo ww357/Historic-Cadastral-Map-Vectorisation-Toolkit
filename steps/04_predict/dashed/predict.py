@@ -10,7 +10,7 @@ patch is a single forward pass.
 
 Weight search order:
   1. --weights CLI argument (explicit path)
-  2. Most recently modified *.h5 in models/base/dashed/
+  2. Most recently modified *.h5 in models/base/dashed_unet/
 
 Both Keras 3 (*.weights.h5) and Keras 2 (*.h5) weight files are accepted.
 Keras 3 picks its loader from the *filename*, not the file contents, so a
@@ -58,7 +58,7 @@ def resolve_weights(weights_arg: str | None, repo_root: Path, paths_cfg: dict) -
             return p
         sys.exit(f"Weights not found: {p}")
 
-    base_dir = repo_root / paths_cfg["models_base"] / "dashed"
+    base_dir = repo_root / paths_cfg["models_base"] / "dashed_unet"
     candidates = sorted(base_dir.glob("*.h5"), key=lambda p: p.stat().st_mtime)
     if candidates:
         return candidates[-1]
@@ -177,6 +177,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run DashedLineUNet on a patchified map sheet.")
     parser.add_argument("--sheet", required=True, help="Sheet ID")
     parser.add_argument("--weights", default=None,
-                        help="Path to weights file (default: auto-selects from models/base/dashed/)")
+                        help="Path to weights file (default: auto-selects from models/base/dashed_unet/)")
     args = parser.parse_args()
     predict(args.sheet, args.weights)
