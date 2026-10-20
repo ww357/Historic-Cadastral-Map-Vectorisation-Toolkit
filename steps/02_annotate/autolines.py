@@ -162,7 +162,9 @@ def detect_lines(img: np.ndarray, valid: np.ndarray | None, p: dict) -> list[np.
         return []
 
     lines: list[np.ndarray] = []
-    sk = Skeleton(skel, keep_images=False)
+    sk, skel = _trace(skel)
+    if sk is None:
+        return []
     for i in range(sk.n_paths):
         coords = sk.path_coordinates(i)
         if len(coords) < 4:                       # junction-to-junction crumbs
@@ -171,6 +173,20 @@ def detect_lines(img: np.ndarray, valid: np.ndarray | None, p: dict) -> list[np.
         if len(pts) >= 2:
             lines.append(pts)
     return lines
+
+
+def _trace(skel: np.ndarray):
+    """
+    (skan Skeleton, cleaned skeleton) - or (None, empty) if there is nothing to trace.
+    skan raises ValueError on an empty image or one where no pixel has a neighbour,
+    and pruning can leave exactly that (e.g. a Y of three short arms is erased down
+    to its single junction pixel), so isolated pixels are dropped first.
+    """
+    nbr = ndi.convolve(skel.astype(np.uint8), np.ones((3, 3), np.uint8), mode="constant") - 1
+    skel = skel & (nbr > 0)
+    if not skel.any():
+        return None, skel
+    return Skeleton(skel, keep_images=False), skel
 
 
 def _component_filter(skel: np.ndarray, p: dict) -> np.ndarray:
@@ -194,13 +210,13 @@ def _prune(skel: np.ndarray, p: dict, rounds: int = 3) -> np.ndarray:
     """
     skel = skel.copy()
     for _ in range(rounds):
-        if not skel.any():
+        sk, skel = _trace(skel)
+        if sk is None:
             break
         # Neighbour count per skeleton pixel: 1 = endpoint, >=3 = junction.
         deg = ndi.convolve(skel.astype(np.uint8), np.ones((3, 3), np.uint8),
                            mode="constant") - 1
         deg[~skel] = 0
-        sk = Skeleton(skel, keep_images=False)
         changed = False
         for i in range(sk.n_paths):
             c = sk.path_coordinates(i).astype(int)
@@ -271,6 +287,32 @@ def draw_preview(img: Image.Image, lines: list[np.ndarray], out: Path) -> None:
 
 # -- Driver ----------------------------------------------------------------------
 
+def sample_patches(patches: list[Path], n: int, mask, offsets, erode: int) -> list[Path]:
+    """
+    n patches spread evenly across the sheet. Sorted order starts at the sheet's top
+    edge, where patches are mostly margin, so `first N` is a poor preview. With a mask,
+    only patches at least half inside the map area are considered.
+    """
+    if len(patches) <= n:
+        return patches
+    pool = patches
+    if mask is not None:
+        cover = []
+        for pp in patches:
+            if pp.stem in offsets:
+                w, h = Image.open(pp).size            # header only, no pixel decode
+                c, r = offsets[pp.stem]
+                cover.append(float(patch_valid_region(mask, c, r, w, h, erode).mean()))
+            else:
+                cover.append(1.0)
+        pool = [pp for pp, c in zip(patches, cover) if c >= 0.5]
+        if len(pool) < n:                             # sparse sheet: best-covered n
+            ranked = sorted(zip(cover, patches), key=lambda t: -t[0])[:n]
+            pool = sorted(pp for _, pp in ranked)
+    idx = sorted(set(np.linspace(0, len(pool) - 1, n).round().astype(int)))
+    return [pool[i] for i in idx]
+
+
 def autolines(sheet_id: str, p: dict, label: str, preview: bool, overwrite: bool,
               limit: int | None, only_patch: str | None, use_mask: bool) -> None:
     cfg         = load_config()
@@ -299,15 +341,21 @@ def autolines(sheet_id: str, p: dict, label: str, preview: bool, overwrite: bool
         elif mask_path:
             mask_note = f"found {mask_path.name} but {meta_csv.name} is missing - not used"
 
+    if limit is not None and not only_patch:
+        patches = sample_patches(patches, limit, mask, offsets, int(p["mask_erode"]))
+        sample_note = f"  (--limit: {len(patches)} spread across the sheet)"
+    else:
+        sample_note = ""
     print(f"Sheet      : {sheet_id}")
-    print(f"Patches    : {len(patches)}  ({patches_dir})")
+    print(f"Patches    : {len(patches)}  ({patches_dir}){sample_note}")
     print(f"Mask       : {mask_note}")
     print(f"Label      : {label}")
     print(f"Mode       : {'PREVIEW -> ' + str(prev_dir) if preview else 'write labelme JSON -> ' + str(json_dir)}")
     print(f"Params     : low={p['low']} high={p['high']} tophat={p['tophat_radius']} "
           f"min_length={p['min_length']} spur={p['spur_length']} simplify={p['simplify']}\n")
 
-    done = skipped = empty = total_lines = 0
+    done = skipped = empty = failed = total_lines = 0
+    counts: dict[str, int] = {}
     for img_path in tqdm(patches, unit="patch"):
         if limit is not None and done >= limit:
             break
@@ -335,9 +383,15 @@ def autolines(sheet_id: str, p: dict, label: str, preview: bool, overwrite: bool
             col_off, row_off = offsets[img_path.stem]
             valid = patch_valid_region(mask, col_off, row_off, w, h, int(p["mask_erode"]))
 
-        lines = detect_lines(arr, valid, p)
+        try:
+            lines = detect_lines(arr, valid, p)
+        except Exception as e:                    # one odd patch must not abort the sheet
+            failed += 1
+            tqdm.write(f"  ! {img_path.stem}: {type(e).__name__}: {e} - skipped")
+            continue
         done += 1
         total_lines += len(lines)
+        counts[img_path.stem] = len(lines)
 
         if preview:
             draw_preview(pil, lines, prev_dir / f"{img_path.stem}.png")
@@ -350,6 +404,15 @@ def autolines(sheet_id: str, p: dict, label: str, preview: bool, overwrite: bool
 
     print(f"\nProcessed {done} patch(es): {total_lines} line(s) drawn"
           + (f", {empty} with no lines (no JSON written)" if empty and not preview else ""))
+    if failed:
+        print(f"WARNING: {failed} patch(es) raised an error and were skipped (messages above).")
+    if preview and counts:
+        print("Lines per patch: " + "  ".join(f"{k.rsplit('_', 2)[-2]}_{k.rsplit('_', 1)[-1]}={v}"
+                                              for k, v in counts.items()))
+    if done >= 4 and sum(v == 0 for v in counts.values()) >= done / 2:
+        print("\nHint: at least half of these patches returned no lines. If the overlays show "
+              "ink being missed, this scan is probably fainter than the tuning sheets - try "
+              "--low 0.04 --high 0.12. If those patches really are blank margin, ignore this.")
     if skipped:
         print(f"Skipped {skipped} patch(es) that already have a labelme JSON "
               f"(use --overwrite to refresh the auto-drawn lines only)")
@@ -361,7 +424,7 @@ def autolines(sheet_id: str, p: dict, label: str, preview: bool, overwrite: bool
         print(
             f"\nNext step: review in labelme - delete wrong lines, add missed ones, Save\n"
             f"  conda activate maptools\n"
-            f"  python steps/02_annotate/annotate.py --sheet {sheet_id}"
+            f"  python run.py annotate --sheet {sheet_id}"
         )
 
 
@@ -373,7 +436,8 @@ if __name__ == "__main__":
     ap.add_argument("--sheet", required=True, help="Sheet ID")
     ap.add_argument("--preview", action="store_true",
                     help="Write red-overlay PNGs for tuning; write no labelme JSON")
-    ap.add_argument("--limit", type=int, default=None, help="Only process the first N patches")
+    ap.add_argument("--limit", type=int, default=None,
+                    help="Process only N patches, spread evenly across the sheet (well inside the map area)")
     ap.add_argument("--patch", default=None, help="Process a single patch ID")
     ap.add_argument("--overwrite", action="store_true",
                     help="Refresh auto-drawn lines in existing JSONs (hand-made shapes are kept)")
