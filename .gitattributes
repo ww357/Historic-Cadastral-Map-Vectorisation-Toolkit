@@ -1,0 +1,3 @@
+# Normalise all text to LF in the repo (prevents CRLF-vs-LF whole-file
+# merge conflicts when files are edited/copied from Windows).
+* text=auto eol=lf
