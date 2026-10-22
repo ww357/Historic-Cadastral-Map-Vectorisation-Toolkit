@@ -131,7 +131,7 @@ def patchify(sheet_id: str, require_mask: bool, repo_root: Path):
                 "The pipeline's thresholds are in linear CRS units (metres), so a "
                 "degree CRS would make every threshold meaningless.\n"
                 "Reproject to a projected metre CRS first (BNG, UTM, Irish Grid, ...):\n"
-                f"  python steps/01_patchify/reproject.py --sheet {sheet_id}\n"
+                f"  python run.py reproject --sheet {sheet_id}\n"
                 "Set the target under `reproject:` in config.yaml (default EPSG:27700). "
                 "The reprojected GeoTIFF is then used automatically."
             )
@@ -216,9 +216,9 @@ def patchify(sheet_id: str, require_mask: bool, repo_root: Path):
     print(
         f"\nNext step: annotate a sample of patches in labelme\n"
         f"  conda activate maptools\n"
-        f"  python steps/02_annotate/annotate.py --sheet {sheet_id}\n"
+        f"  python run.py annotate --sheet {sheet_id}\n"
         f"Optional first (pre-draws boundary lines for you to edit instead of tracing):\n"
-        f"  python steps/02_annotate/autolines.py --sheet {sheet_id} --preview --limit 8"
+        f"  python run.py autolines --sheet {sheet_id} --preview --limit 8"
     )
 
 

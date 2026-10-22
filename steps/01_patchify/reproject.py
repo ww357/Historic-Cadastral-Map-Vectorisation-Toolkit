@@ -140,8 +140,8 @@ def main() -> None:
     print(
         f"\nDone. find_raw now prefers {out_path.name}, so the rest of the pipeline uses it.\n"
         f"Next step:\n"
-        f"  python steps/01_patchify/draw_mask.py --sheet {sheet}   (optional map-area mask)\n"
-        f"  python steps/01_patchify/patchify.py --sheet {sheet} [--mask]"
+        f"  python run.py draw-mask --sheet {sheet}   (optional map-area mask)\n"
+        f"  python run.py patchify --sheet {sheet} [--mask]"
     )
 
 

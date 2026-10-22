@@ -168,7 +168,7 @@ def predict(sheet_id: str, weights_arg: str | None = None):
     print(
         f"\nNext step: stitch and vectorise to GeoPackage\n"
         f"  conda activate maptools\n"
-        f"  python steps/05_vectorise/dashed/vectorise.py --sheet {sheet_id}"
+        f"  python run.py vectorise-dashed --sheet {sheet_id}"
     )
     tf.keras.backend.clear_session()
 

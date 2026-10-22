@@ -356,7 +356,7 @@ def draw_mask(sheet_id: str, preview_size: int):
     print(
         f"\nNext step: slice the sheet into patches using this mask\n"
         f"  conda activate maptools\n"
-        f"  python steps/01_patchify/patchify.py --sheet {sheet_id} --mask"
+        f"  python run.py patchify --sheet {sheet_id} --mask"
     )
 
 

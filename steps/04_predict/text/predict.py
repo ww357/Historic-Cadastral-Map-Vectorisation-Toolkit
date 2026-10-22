@@ -329,7 +329,7 @@ def predict(sheet_id: str, repo_root: Path,
         print(f"  {geojson_path.relative_to(repo_root)}")
         print(f"\nTo add the text layer to the GeoPackage:")
         print(f"  conda activate maptools")
-        print(f"  python steps/05_vectorise/text/vectorise.py --sheet {sheet_id}")
+        print(f"  python run.py vectorise-text --sheet {sheet_id}")
         print(f"\nTo force a full re-run, delete these files first:")
         print(f"  rm {geojson_path}")
         print(f"  rm {checkpoint_path}")
@@ -499,7 +499,7 @@ def predict(sheet_id: str, repo_root: Path,
 
     print(f"\nTo add the text layer to the GeoPackage, run in a separate terminal:")
     print(f"  conda activate maptools")
-    print(f"  python steps/05_vectorise/text/vectorise.py --sheet {sheet_id}")
+    print(f"  python run.py vectorise-text --sheet {sheet_id}")
     print(f"\nDone.")
 
 

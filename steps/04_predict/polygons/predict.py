@@ -293,8 +293,8 @@ if __name__ == "__main__":
     print("\nNext step: vectorise to GeoPackage")
     if mapsam_features:
         print(f"  conda activate maptools\n"
-              f"  python steps/05_vectorise/polygons/vectorise.py --sheet {args.sheet} "
+              f"  python run.py vectorise-polygons --sheet {args.sheet} "
               f"--feature {' '.join(mapsam_features)}")
     if "text" in features:
         print(f"  conda activate maptools\n"
-              f"  python steps/05_vectorise/text/vectorise.py --sheet {args.sheet}")
+              f"  python run.py vectorise-text --sheet {args.sheet}")

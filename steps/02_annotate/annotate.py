@@ -117,7 +117,7 @@ def annotate(sheet_id: str, plain: bool = False):
     print(
         f"\nNext step: export the labelme JSON to binary masks\n"
         f"  conda activate maptools\n"
-        f"  python steps/02_annotate/export_masks.py --sheet {sheet_id}"
+        f"  python run.py export-masks --sheet {sheet_id}"
     )
 
 

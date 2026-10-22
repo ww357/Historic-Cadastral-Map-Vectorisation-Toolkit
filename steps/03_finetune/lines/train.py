@@ -338,9 +338,9 @@ def main():
     print(f"Weights saved -> {best_path.relative_to(ROOT)}")
     print(
         f"\nNext step: run prediction then mend in QGIS, then run step 06 feedback:\n"
-        f"  python steps/04_predict/lines/predict.py --sheet {args.sheet}\n"
-        f"  python steps/06_feedback/lines/prepare.py --sheet {args.sheet}\n"
-        f"  python steps/06_feedback/lines/train.py --sheet {args.sheet}"
+        f"  python run.py predict-lines --sheet {args.sheet}\n"
+        f"  python run.py prepare-lines --sheet {args.sheet}\n"
+        f"  python run.py feedback-lines --sheet {args.sheet}"
     )
 
 

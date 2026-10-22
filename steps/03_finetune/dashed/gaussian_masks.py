@@ -151,7 +151,7 @@ def main():
     print(
         "\nNext step: train the dashed-line model (pooled over every sheet above)\n"
         "  conda activate lines\n"
-        "  python steps/03_finetune/dashed/train.py"
+        "  python run.py train-dashed"
     )
 
 

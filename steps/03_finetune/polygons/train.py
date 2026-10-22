@@ -447,7 +447,7 @@ def main():
     print(
         f"\nNext step: predict this feature across the sheet\n"
         f"  conda activate polygons\n"
-        f"  python steps/04_predict/polygons/predict.py --sheet {args.sheet} "
+        f"  python run.py predict-polygons --sheet {args.sheet} "
         f"--feature {args.feature}"
     )
 

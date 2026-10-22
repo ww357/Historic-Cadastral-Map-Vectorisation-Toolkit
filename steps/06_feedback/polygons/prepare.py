@@ -337,7 +337,7 @@ def main() -> None:
     print(f"Skipped: {skipped} (area < {min_area} m2 or fill out of range)")
     print(f"Meta   : {meta_path.name}")
     print(
-        f"\nNext:  python steps/06_feedback/polygons/train.py "
+        f"\nNext:  python run.py feedback-polygons "
         f"--sheet {args.sheet} --feature {args.feature}"
     )
 

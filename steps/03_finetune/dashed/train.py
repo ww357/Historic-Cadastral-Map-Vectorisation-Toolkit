@@ -275,8 +275,8 @@ def main():
     print(f"Training curve      -> {(logs_dir / 'dashed_training_curves.png').relative_to(ROOT)}")
     print(
         "\nNext step: run prediction then mend in QGIS:\n"
-        "  python steps/04_predict/dashed/predict.py --sheet SHEET_ID\n"
-        "  python steps/05_vectorise/dashed/vectorise.py --sheet SHEET_ID"
+        "  python run.py predict-dashed --sheet SHEET_ID\n"
+        "  python run.py vectorise-dashed --sheet SHEET_ID"
     )
 
 

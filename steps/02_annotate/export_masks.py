@@ -153,13 +153,13 @@ def export_masks(sheet_id: str, line_width_override: int | None,
     for label in sorted(counts):
         if label == boundary_label:
             print(f"  {label:<16} conda activate lines    && "
-                  f"python steps/03_finetune/lines/train.py --sheet {sheet_id}")
+                  f"python run.py train-lines --sheet {sheet_id}")
         elif label == "dashed":
             print(f"  {label:<16} conda activate lines    && "
-                  f"python steps/03_finetune/dashed/train.py   (pooled over all sheets)")
+                  f"python run.py train-dashed   (pooled over all sheets)")
         else:
             print(f"  {label:<16} conda activate polygons && "
-                  f"python steps/03_finetune/polygons/train.py --sheet {sheet_id} "
+                  f"python run.py train-polygons --sheet {sheet_id} "
                   f"--feature {label}")
 
 

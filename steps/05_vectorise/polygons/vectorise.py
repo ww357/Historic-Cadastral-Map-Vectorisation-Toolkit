@@ -153,8 +153,8 @@ def vectorise(sheet_id: str, feature: str, cfg: dict, stitched_path: Path,
     print(
         f"\nNext step: mend the '{feature}' layer in QGIS, then feed the corrections back:\n"
         f"  conda activate polygons\n"
-        f"  python steps/06_feedback/polygons/prepare.py --sheet {sheet_id} --feature {feature}\n"
-        f"  python steps/06_feedback/polygons/train.py --sheet {sheet_id} --feature {feature}"
+        f"  python run.py prepare-polygons --sheet {sheet_id} --feature {feature}\n"
+        f"  python run.py feedback-polygons --sheet {sheet_id} --feature {feature}"
     )
 
 

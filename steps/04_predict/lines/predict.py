@@ -193,7 +193,7 @@ def predict(sheet_id: str, repo_root: Path, weights_arg: str | None = None):
     print(
         f"\nNext step: stitch and vectorise to GeoPackage\n"
         f"  conda activate maptools\n"
-        f"  python steps/05_vectorise/lines/vectorise.py --sheet {sheet_id}"
+        f"  python run.py vectorise-lines --sheet {sheet_id}"
     )
     tf.keras.backend.clear_session()
 

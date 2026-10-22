@@ -568,7 +568,7 @@ def main() -> None:
 
     _write_preview(labels, boundary_vis, out_preview)
     print(f"Preview -> {out_preview.relative_to(ROOT)}")
-    print(f"\nNext:  python steps/05_vectorise/parcels/vectorise.py --sheet {sheet}")
+    print(f"\nNext:  python run.py vectorise-parcels --sheet {sheet}")
 
 
 def build_ridge_surface(sheet, cfg, extent_features, transform, H, W, mended_path,

@@ -13,3 +13,9 @@ models/MapSAM
 models/MapTextPipeline
 models/__pycache__/
 
+
+temp:
+docs/
+gui/
+identity_check.py
+models/DoRALinearUNet/

@@ -471,7 +471,7 @@ def main():
         print(f"Eligible  -> {(feedback_dir / 'eligible.csv').relative_to(ROOT)}")
     print(f"\nNext step:")
     print(f"  conda activate lines")
-    print(f"  python steps/06_feedback/lines/train.py "
+    print(f"  python run.py feedback-lines "
           f"--sheet {sheet_id} --name feedback_v1")
 
 

@@ -142,7 +142,7 @@ def vectorise(sheet_id: str, cfg: dict, stitched_path: Path, georef: dict,
     print(
         f"\nNext step: mend the '{LAYER}' layer in QGIS. To use it as a parcel boundary:\n"
         f"  conda activate polygons\n"
-        f"  python steps/04_predict/parcels/predict.py --sheet {sheet_id} --extent boundaries dashed"
+        f"  python run.py predict-parcels --sheet {sheet_id} --extent boundaries dashed"
     )
 
 

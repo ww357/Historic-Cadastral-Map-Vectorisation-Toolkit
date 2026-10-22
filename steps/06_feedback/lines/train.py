@@ -177,7 +177,7 @@ def build_training_arrays(
             "No feedback tiles found for the current sheet.\n"
             "Run prepare.py first:\n"
             "  conda activate maptools\n"
-            "  python steps/06_feedback/lines/prepare.py --sheet SHEET_ID"
+            "  python run.py prepare-lines --sheet SHEET_ID"
         )
 
     if gt_tiles and 0 < replay_ratio < 1:
@@ -402,7 +402,7 @@ def main():
             f"manifest.csv not found at {manifest_path}\n"
             "Run prepare.py first:\n"
             "  conda activate maptools\n"
-            f"  python steps/06_feedback/lines/prepare.py --sheet {sheet_id}"
+            f"  python run.py prepare-lines --sheet {sheet_id}"
         )
     manifest = pd.read_csv(manifest_path).to_dict("records")
     print(f"Manifest loaded: {len(manifest)} entries")
@@ -451,7 +451,7 @@ def main():
             f"No feedback tiles found for sheet '{sheet_id}'.\n"
             f"Run prepare.py first:\n"
             f"  conda activate maptools\n"
-            f"  python steps/06_feedback/lines/prepare.py --sheet {sheet_id}"
+            f"  python run.py prepare-lines --sheet {sheet_id}"
         )
     if not val_tiles:
         print(
@@ -591,7 +591,7 @@ def main():
         f"Step 03 finetune and step 04 predict will use them automatically\n"
         f"as the starting point for the next sheet.\n"
         f"\nTo compare iterative versions run:\n"
-        f"  python steps/03_finetune/lines/evaluate.py"
+        f"  python run.py evaluate-lines"
     )
 
 

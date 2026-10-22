@@ -146,9 +146,9 @@ def vectorise(sheet_id: str, cfg: dict, stitched_path: Path, georef: dict,
         f"\nNext step: mend the 'boundaries' layer in QGIS, then feed the "
         f"corrections back:\n"
         f"  conda activate maptools\n"
-        f"  python steps/06_feedback/lines/prepare.py --sheet {sheet_id}\n"
+        f"  python run.py prepare-lines --sheet {sheet_id}\n"
         f"  conda activate lines\n"
-        f"  python steps/06_feedback/lines/train.py --sheet {sheet_id}"
+        f"  python run.py feedback-lines --sheet {sheet_id}"
     )
 
 
