@@ -1,5 +1,5 @@
 """
-Start labelme with two annotation speed-ups that labelme itself does not have.
+Start labelme with annotation speed-ups and one safeguard that labelme itself lacks.
 Takes exactly the same arguments as the `labelme` command.
 
   1. Drag-rectangle selection (edit mode). Press on empty background and drag:
@@ -11,6 +11,11 @@ Takes exactly the same arguments as the `labelme` command.
      vertices exactly, which is what makes clearing auto-drawn lines slow.)
 
   2. Delete without the "permanently delete N shapes?" popup. Ctrl+Z still undoes it.
+
+  3. Never reopen off-screen. labelme restores its last window position without checking
+     it is on a connected monitor, so a window last closed on an external display that is
+     now unplugged opens as a blank, unreachable taskbar entry (and `--plain` has the same
+     problem). The saved position is checked at startup and pulled onto the main screen.
 
 This lives in a wrapper because labelme_config.yaml can only change shortcuts, colours
 and flags - it cannot add a tool. The patch is applied to the running labelme in memory;
@@ -51,6 +56,35 @@ def _touches(shape, r) -> bool:
         return any(r.contains(p) for p in pts) or any(
             _seg_hits_rect(a, b, r) for a, b in zip(pts, pts[1:]))
     return shape.boundingRect().intersects(r)        # polygons, rectangles, points
+
+
+def fit_saved_window(settings, screens, QtCore) -> str | None:
+    """
+    labelme restores its last window size/position blindly (resize(); move()), so a window
+    last closed on a monitor that is no longer connected reopens OFF-SCREEN: a taskbar entry
+    that cannot be brought up. If the saved title bar is not reachable on any current screen,
+    shrink the window to fit and centre it on the primary screen. `screens` is a list of
+    available-geometry QRects, primary first. Returns a note if it changed anything.
+    """
+    size, pos = settings.value("window/size"), settings.value("window/position")
+    if not (isinstance(size, QtCore.QSize) and isinstance(pos, QtCore.QPoint)) or not screens:
+        return None
+    strip = QtCore.QRect(pos.x(), pos.y(), size.width(), 40)          # the title-bar strip
+    reachable = any(strip.intersected(g).width() >= 150 and strip.intersected(g).height() >= 20
+                    for g in screens)
+    biggest = max(g.width() for g in screens), max(g.height() for g in screens)
+    if reachable and size.width() <= biggest[0] and size.height() <= biggest[1]:
+        return None
+    home = screens[0]
+    new = QtCore.QSize(min(size.width(), int(home.width() * 0.9)),
+                       min(size.height(), int(home.height() * 0.9)))
+    new_pos = QtCore.QPoint(home.x() + (home.width() - new.width()) // 2,
+                            home.y() + (home.height() - new.height()) // 2)
+    settings.setValue("window/size", new)
+    settings.setValue("window/position", new_pos)
+    settings.sync()
+    return (f"saved window {size.width()}x{size.height()} at ({pos.x()},{pos.y()}) could not be used on the "
+            f"connected screens - moved to {new.width()}x{new.height()} at ({new_pos.x()},{new_pos.y()})")
 
 
 def install() -> None:
@@ -154,6 +188,24 @@ def install() -> None:
             box.warning = saved
 
     lapp.MainWindow.deleteSelectedShape = delete_no_confirm
+
+    # Never reopen off-screen: runs just before labelme builds its window (QApplication exists).
+    o_init = lapp.MainWindow.__init__
+
+    def init_with_visible_window(self, *a, **k):
+        try:
+            app = QtWidgets.QApplication.instance()
+            primary = app.primaryScreen()
+            order = [primary] + [s for s in app.screens() if s is not primary]
+            note = fit_saved_window(QtCore.QSettings("labelme", "labelme"),
+                                    [s.availableGeometry() for s in order], QtCore)
+            if note:
+                print(f"labelme_launch: {note}")
+        except Exception as e:                                # a guard must never block startup
+            print(f"labelme_launch: window-position check skipped ({e!r})")
+        o_init(self, *a, **k)
+
+    lapp.MainWindow.__init__ = init_with_visible_window
 
 
 def main() -> None:
