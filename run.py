@@ -35,6 +35,7 @@ COMMANDS: dict[str, tuple[str, str | None]] = {
     "draw-mask":          ("steps/01_patchify/draw_mask.py",              "maptools"),
     "patchify":           ("steps/01_patchify/patchify.py",               "maptools"),
     # 02 annotate
+    "pick-patches":       ("steps/02_annotate/pick_patches.py",           "maptools"),
     "autolines":          ("steps/02_annotate/autolines.py",              "maptools"),
     "annotate":           ("steps/02_annotate/annotate.py",               "maptools"),
     "export-masks":       ("steps/02_annotate/export_masks.py",           "maptools"),
@@ -69,7 +70,7 @@ COMMANDS: dict[str, tuple[str, str | None]] = {
 # Printed by `list`, grouped so the pipeline order is obvious.
 GROUPS = [
     ("01 patchify",  ["reproject", "draw-mask", "patchify"]),
-    ("02 annotate",  ["autolines", "annotate", "export-masks"]),
+    ("02 annotate",  ["pick-patches", "autolines", "annotate", "export-masks"]),
     ("03 finetune",  ["train-lines", "train-dashed", "dashed-masks",
                       "train-polygons", "evaluate-lines"]),
     ("04 predict",   ["predict-lines", "predict-dashed", "predict-polygons",

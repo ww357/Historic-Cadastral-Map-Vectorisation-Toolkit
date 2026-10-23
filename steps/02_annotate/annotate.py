@@ -71,7 +71,8 @@ def annotate(sheet_id: str, plain: bool = False):
               + (f" ({n_auto} pre-drawn by autolines - review them: delete wrong lines, then Save)"
                  if n_auto else " already annotated"))
     elif patches_dir.exists():
-        print("Tip        : autolines.py can pre-draw boundary lines to edit instead of tracing from scratch")
+        print("Tip        : `run.py pick-patches` then `run.py autolines --select` pre-draws boundary "
+              "lines on patches you choose, to edit instead of tracing from scratch")
     print()
     print("In labelme:")
     print("  Draw linestrip  (boundaries) - Edit > Shortcuts to assign Ctrl+L")

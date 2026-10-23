@@ -218,7 +218,8 @@ def patchify(sheet_id: str, require_mask: bool, repo_root: Path):
         f"  conda activate maptools\n"
         f"  python run.py annotate --sheet {sheet_id}\n"
         f"Optional first (pre-draws boundary lines for you to edit instead of tracing):\n"
-        f"  python run.py autolines --sheet {sheet_id} --preview --limit 8"
+        f"  python run.py pick-patches --sheet {sheet_id}    (choose which patches, in a window)\n"
+        f"  python run.py autolines --sheet {sheet_id} --select --preview"
     )
 
 

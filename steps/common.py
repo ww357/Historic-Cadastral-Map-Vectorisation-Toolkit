@@ -57,6 +57,12 @@ def find_raw(raw_root: Path, sheet_id: str) -> Path | None:
     return None
 
 
+def selection_file(cfg: dict, sheet_id: str) -> Path:
+    """Patch list saved by pick_patches.py and read by `autolines --select`
+    (one patch id per line): data/patches/selections/<sheet>.txt"""
+    return ROOT / cfg["paths"]["patches"] / "selections" / f"{sheet_id}.txt"
+
+
 def find_mask(mask_dir: Path, sheet_id: str) -> Path | None:
     """Return a map-area mask (data/map_area_masks/<sheet>/<sheet>.png/.tif), or None."""
     for ext in (".png", ".tif", ".tiff"):

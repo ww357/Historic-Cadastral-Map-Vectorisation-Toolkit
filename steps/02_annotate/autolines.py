@@ -37,6 +37,7 @@ without --preview. Defaults live under `autolines:` in config.yaml.
 
 Usage:
     python autolines.py --sheet SHEET_ID [--preview] [--limit N] [--patch ID]
+                        [--select] [--patches ID ...]
                         [--overwrite] [--low F] [--high F] [--min-length PX] ...
 """
 
@@ -61,7 +62,7 @@ from tqdm import tqdm
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
-from common import find_mask, load_config   # noqa: E402
+from common import find_mask, load_config, selection_file   # noqa: E402
 
 AUTO_TAG = "autolines"   # stored in each shape's `description` so re-runs can tell them apart
 
@@ -313,8 +314,25 @@ def sample_patches(patches: list[Path], n: int, mask, offsets, erode: int) -> li
     return [pool[i] for i in idx]
 
 
+def resolve_chosen(sheet_id: str, cfg: dict, use_saved: bool, ids: list[str] | None) -> list[str] | None:
+    """Patch ids picked with --select (list saved by pick_patches.py) and/or --patches.
+    Short ids like r0012_c0031 are expanded with the sheet name. None = no selection given."""
+    if not use_saved and not ids:
+        return None
+    chosen: list[str] = []
+    if use_saved:
+        f = selection_file(cfg, sheet_id)
+        if not f.exists():
+            sys.exit(f"--select: no saved selection for '{sheet_id}' ({f}).\n"
+                     f"Make one first:  python run.py pick-patches --sheet {sheet_id}")
+        chosen += [ln.strip() for ln in f.read_text().splitlines() if ln.strip() and not ln.startswith("#")]
+    chosen += list(ids or [])
+    return [c if c.startswith(sheet_id) else f"{sheet_id}_{c}" for c in chosen]
+
+
 def autolines(sheet_id: str, p: dict, label: str, preview: bool, overwrite: bool,
-              limit: int | None, only_patch: str | None, use_mask: bool) -> None:
+              limit: int | None, only_patch: str | None, use_mask: bool,
+              chosen: list[str] | None = None) -> None:
     cfg         = load_config()
     patches_dir = ROOT / cfg["paths"]["patches"] / "images" / sheet_id
     json_dir    = ROOT / cfg["paths"]["annotations"] / "labelme_json" / sheet_id
@@ -329,6 +347,14 @@ def autolines(sheet_id: str, p: dict, label: str, preview: bool, overwrite: bool
         patches = [x for x in patches if x.stem == only_patch]
         if not patches:
             sys.exit(f"Patch '{only_patch}' not found in {patches_dir}")
+    chosen_note = ""
+    if chosen is not None:
+        have = {x.stem for x in patches}
+        missing = [c for c in chosen if c not in have]
+        patches = [x for x in patches if x.stem in set(chosen)]
+        if not patches:
+            sys.exit("None of the chosen patches exist in " + str(patches_dir))
+        chosen_note = f"  (chosen: {len(patches)}" + (f", {len(missing)} not found: {missing[:3]}" if missing else "") + ")"
 
     # Map-area mask: optional, but needs the patchify metadata to line up with patches.
     mask = offsets = None
@@ -341,13 +367,13 @@ def autolines(sheet_id: str, p: dict, label: str, preview: bool, overwrite: bool
         elif mask_path:
             mask_note = f"found {mask_path.name} but {meta_csv.name} is missing - not used"
 
-    if limit is not None and not only_patch:
+    if limit is not None and not only_patch:   # with a selection, --limit samples within it
         patches = sample_patches(patches, limit, mask, offsets, int(p["mask_erode"]))
         sample_note = f"  (--limit: {len(patches)} spread across the sheet)"
     else:
         sample_note = ""
     print(f"Sheet      : {sheet_id}")
-    print(f"Patches    : {len(patches)}  ({patches_dir}){sample_note}")
+    print(f"Patches    : {len(patches)}  ({patches_dir}){chosen_note}{sample_note}")
     print(f"Mask       : {mask_note}")
     print(f"Label      : {label}")
     print(f"Mode       : {'PREVIEW -> ' + str(prev_dir) if preview else 'write labelme JSON -> ' + str(json_dir)}")
@@ -439,6 +465,10 @@ if __name__ == "__main__":
     ap.add_argument("--limit", type=int, default=None,
                     help="Process only N patches, spread evenly across the sheet (well inside the map area)")
     ap.add_argument("--patch", default=None, help="Process a single patch ID")
+    ap.add_argument("--select", action="store_true",
+                    help="Only the patches chosen with `run.py pick-patches` (data/patches/selections/<sheet>.txt)")
+    ap.add_argument("--patches", nargs="+", metavar="ID", default=None,
+                    help="Only these patch ids (full, or short like r0012_c0031); can be combined with --select")
     ap.add_argument("--overwrite", action="store_true",
                     help="Refresh auto-drawn lines in existing JSONs (hand-made shapes are kept)")
     ap.add_argument("--no-mask", action="store_true", help="Ignore the map-area mask")
@@ -450,5 +480,6 @@ if __name__ == "__main__":
 
     params = {k: getattr(args, k) for k in cfg_defaults}
     boundary = args.label or load_config()["annotation"].get("boundary_label", "boundary")
+    chosen = resolve_chosen(args.sheet, load_config(), args.select, args.patches)
     autolines(args.sheet, params, boundary, args.preview, args.overwrite,
-              args.limit, args.patch, not args.no_mask)
+              args.limit, args.patch, not args.no_mask, chosen)
