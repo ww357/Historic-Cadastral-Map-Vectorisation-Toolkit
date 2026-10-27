@@ -63,6 +63,7 @@ from tqdm import tqdm
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
 from common import find_mask, load_config, selection_file   # noqa: E402
+from annotation_helpers import write_labelme_json   # noqa: E402
 
 AUTO_TAG = "autolines"   # stored in each shape's `description` so re-runs can tell them apart
 
@@ -240,14 +241,6 @@ def _prune(skel: np.ndarray, p: dict, rounds: int = 3) -> np.ndarray:
 
 # -- labelme JSON ----------------------------------------------------------------
 
-def labelme_version() -> str:
-    try:
-        import labelme
-        return str(labelme.__version__)
-    except Exception:
-        return "5.5.0"
-
-
 def make_shape(pts_rc: np.ndarray, label: str) -> dict:
     return {
         "label": label,
@@ -257,24 +250,6 @@ def make_shape(pts_rc: np.ndarray, label: str) -> dict:
         "shape_type": "linestrip",
         "flags": {},
     }
-
-
-def write_labelme_json(json_path: Path, img_path: Path, shapes: list[dict],
-                       width: int, height: int, extra_shapes: list[dict]) -> None:
-    # imagePath is relative to the JSON file: labelme resolves it from there when
-    # it loads an existing annotation, so a wrong value means the patch won't open.
-    rel = os.path.relpath(img_path, json_path.parent).replace("\\", "/")
-    data = {
-        "version": labelme_version(),
-        "flags": {},
-        "shapes": extra_shapes + shapes,
-        "imagePath": rel,
-        "imageData": None,
-        "imageHeight": height,
-        "imageWidth": width,
-    }
-    json_path.parent.mkdir(parents=True, exist_ok=True)
-    json_path.write_text(json.dumps(data, indent=2))
 
 
 def draw_preview(img: Image.Image, lines: list[np.ndarray], out: Path) -> None:

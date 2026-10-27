@@ -13,6 +13,7 @@ the functions that use them, so importing this module stays cheap.
 from __future__ import annotations
 
 import sqlite3
+import sys
 from pathlib import Path
 
 from common import ROOT, rel_to_root
@@ -74,9 +75,62 @@ def add_raster_layer(stitched_path: Path, gpkg_path: Path, layer_name: str) -> N
     src = None
 
 
+# -- Manual layers -----------------------------------------------------------------
+# Layers imported from data/manual_layers/ (import_layers.py) are the user's own finished
+# work, not model output. Every feature carries source = "manual"; that column is the mark
+# (it survives being copied into a mended GeoPackage or edited in QGIS).
+
+MANUAL_TAG = "manual"
+_replace_manual = False
+
+
+def allow_manual_replace(flag: bool) -> None:
+    """Set from a step's --replace-manual flag: lets a model-output step overwrite a manual layer."""
+    global _replace_manual
+    _replace_manual = bool(flag)
+
+
+def manual_layers(gpkg_path: Path) -> list[str]:
+    """Vector layers in `gpkg_path` whose features are tagged source = 'manual' (sqlite only)."""
+    if not gpkg_path or not Path(gpkg_path).exists():
+        return []
+    found = []
+    con = sqlite3.connect(gpkg_path)
+    try:
+        tables = [r[0] for r in con.execute("SELECT table_name FROM gpkg_contents WHERE data_type='features'")]
+        for t in tables:
+            if t == "Patch_Grid":
+                continue
+            cols = [r[1] for r in con.execute(f"PRAGMA table_info([{t}])")]
+            if "source" in cols and con.execute(
+                    f"SELECT 1 FROM [{t}] WHERE source = ? LIMIT 1", (MANUAL_TAG,)).fetchone():
+                found.append(t)
+    except sqlite3.Error:
+        pass
+    finally:
+        con.close()
+    return found
+
+
+def guard_manual(out_path: Path, layers: list[str]) -> None:
+    """Exit rather than overwrite a manual layer, unless --replace-manual was given."""
+    if _replace_manual:
+        return
+    manual = set(manual_layers(out_path))
+    clash = [n for n in layers if n in manual]
+    if clash:
+        sys.exit(
+            f"Refusing to overwrite manual layer(s): {', '.join(clash)}\n"
+            f"  in {rel_to_root(out_path)}. They were imported from data/manual_layers/ (features tagged "
+            f"source='manual'), so they are your own work, not model output.\n"
+            f"  Pass --replace-manual to replace them with this step's output anyway.")
+
+
 def announce_target(out_path: Path, layers: list[str]) -> None:
-    """Print the output GeoPackage and which of `layers` this run will replace."""
+    """Print the output GeoPackage and which of `layers` this run will replace.
+    Refuses (exits) if one of them is a manual layer and --replace-manual was not given."""
     print(f"Output GPKG  : {rel_to_root(out_path)}")
+    guard_manual(out_path, layers)
     existing = [n for n in layers if layer_exists(out_path, n)]
     if existing:
         print(f"  Replacing existing layer(s): {', '.join(existing)}")
@@ -92,6 +146,8 @@ def write_patch_grid(gpkg_path: Path, meta_path: Path, transform,
       sheet_id           - parent sheet name
       ann_<feature>      - True if an annotation mask exists for that feature/patch
       annotated_features - comma-separated list of annotated features (empty = all predicted)
+      manual_<layer>     - True if the patch touches a manual layer (source = 'manual')
+      manual_features    - comma-separated manual layers touching the patch
     """
     import geopandas as gpd
     import pandas as pd
@@ -137,8 +193,26 @@ def write_patch_grid(gpkg_path: Path, meta_path: Path, transform,
         rectangles.append(rec)
 
     grid_gdf = gpd.GeoDataFrame(rectangles, crs=crs if has_georef else None)
+
+    # Manual layers (imported by import_layers.py): flag every patch the layer touches, the
+    # same way ann_<feature> flags annotated patches.
+    manual = manual_layers(gpkg_path)
+    # Tiny inward shrink so a feature that merely runs along a shared patch edge does not
+    # light up the neighbouring patch too.
+    inner = gpd.GeoDataFrame({"patch_id": grid_gdf["patch_id"]},
+                             geometry=grid_gdf.geometry.buffer(-0.01), crs=grid_gdf.crs)
+    for name in manual:
+        lyr = gpd.read_file(gpkg_path, layer=name, columns=[])          # geometry only
+        hit = gpd.sjoin(inner, lyr[["geometry"]], how="inner", predicate="intersects")["patch_id"]
+        grid_gdf[f"manual_{name}"] = grid_gdf["patch_id"].isin(set(hit))
+    if manual:
+        grid_gdf["manual_features"] = [
+            ", ".join(n for n in manual if grid_gdf.at[i, f"manual_{n}"]) for i in grid_gdf.index]
+
     write_mode = "a" if gpkg_path.exists() else "w"
     grid_gdf.to_file(gpkg_path, driver="GPKG", layer="Patch_Grid", mode=write_mode)
     ann_cols = [f"ann_{f}" for f in feature_mask_dirs] or ["(none)"]
+    man_cols = [f"manual_{n}" for n in manual]
     print(f"  Patch_Grid (vector):  {len(grid_gdf):,} patches  |  "
-          f"annotation columns: {', '.join(ann_cols)}")
+          f"annotation columns: {', '.join(ann_cols)}"
+          + (f"  |  manual columns: {', '.join(man_cols)}" if man_cols else ""))

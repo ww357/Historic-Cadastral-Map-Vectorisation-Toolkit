@@ -23,6 +23,44 @@ from tqdm import tqdm
 from common import ROOT, find_raw, rel_to_root
 
 
+def georef_from_metadata(meta: pd.DataFrame) -> dict:
+    """
+    Whole-sheet georeferencing recovered from the patch metadata CSV (used when the raw map
+    is not on disk). Each row stores that PATCH's transform, so the sheet's origin is the
+    patch origin minus the patch's pixel offset - this works from any patch, not just the
+    top-left one (which usually isn't saved: patches outside the map-area mask are skipped).
+    """
+    has_georef = bool(meta["has_georef"].iloc[0])
+    if not has_georef:
+        return {"transform": None, "crs": None, "has_georef": False}
+    r = meta.iloc[0]
+    return {
+        "transform": Affine(r.tf_a, r.tf_b, r.tf_c - r.col_off * r.tf_a - r.row_off * r.tf_b,
+                            r.tf_d, r.tf_e, r.tf_f - r.col_off * r.tf_d - r.row_off * r.tf_e),
+        "crs": meta["crs"].iloc[0],
+        "has_georef": True,
+    }
+
+
+def sheet_georef(sheet_id: str, cfg: dict) -> dict:
+    """{"transform", "crs", "has_georef", "width", "height"} for a sheet: from the raw map's
+    header when it is on disk, otherwise from the patch metadata CSV."""
+    paths = cfg["paths"]
+    raw_path = find_raw(ROOT / paths["raw"], sheet_id)
+    if raw_path is not None:
+        with rasterio.open(raw_path) as src:
+            return {"transform": src.transform if src.crs else None, "crs": src.crs,
+                    "has_georef": src.crs is not None, "width": src.width, "height": src.height}
+    meta_path = ROOT / paths["patches"] / "metadata" / f"{sheet_id}_patches.csv"
+    if not meta_path.exists():
+        sys.exit(f"Neither the raw map nor {rel_to_root(meta_path)} was found - run patchify first.")
+    meta = pd.read_csv(meta_path)
+    g = georef_from_metadata(meta)
+    g["width"] = int((meta["col_off"] + meta["patch_w"]).max())
+    g["height"] = int((meta["row_off"] + meta["patch_h"]).max())
+    return g
+
+
 def stitch(sheet_id: str, cfg: dict, pred_name: str, ann_name: str,
            stitched_name: str, pixel_label: str) -> tuple[Path, dict]:
     """
@@ -64,13 +102,8 @@ def stitch(sheet_id: str, cfg: dict, pred_name: str, ann_name: str,
         meta_tmp   = pd.read_csv(meta_path)
         img_w      = int((meta_tmp["col_off"] + meta_tmp["patch_w"]).max())
         img_h      = int((meta_tmp["row_off"] + meta_tmp["patch_h"]).max())
-        has_georef = bool(meta_tmp["has_georef"].iloc[0])
-        if has_georef:
-            r0        = meta_tmp[(meta_tmp["row_off"] == 0) & (meta_tmp["col_off"] == 0)].iloc[0]
-            transform = Affine(r0.tf_a, r0.tf_b, r0.tf_c, r0.tf_d, r0.tf_e, r0.tf_f)
-            crs       = meta_tmp["crs"].iloc[0]
-        else:
-            transform, crs = None, None
+        g = georef_from_metadata(meta_tmp)
+        has_georef, transform, crs = g["has_georef"], g["transform"], g["crs"]
 
     print(f"\n-- Stitch --------------------------------------")
     print(f"Sheet      : {sheet_id}")

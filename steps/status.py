@@ -25,6 +25,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
 from common import find_raw, load_config   # noqa: E402
+from geopackage import manual_layers   # noqa: E402
 
 TICK, CROSS = "OK", "--"
 
@@ -140,6 +141,8 @@ def gather(sheet: str, cfg: dict) -> dict:
         "predictions": predictions, "stitched": stitched,
         "gpkg": gpkg, "layers": _gpkg_layers(gpkg),
         "mended": mended, "mended_layers": _gpkg_layers(mended) if mended else [],
+        # layers imported with import-manual (hand-made, features tagged source='manual')
+        "manual": sorted(set(manual_layers(gpkg)) | set(manual_layers(mended) if mended else [])),
         "feedback": feedback, "boundary_label": boundary_label,
     }
 
@@ -152,12 +155,14 @@ def suggest_next(s: dict) -> str | None:
     if not s["patches"]:
         flag = " --mask" if s["mask"] else ""
         return f"python run.py patchify --sheet {sheet}{flag}"
-    if not s["annotations"]:
+    if not s["annotations"] and not s["manual"]:
         return f"python run.py annotate --sheet {sheet}"
 
+    # Features made by hand for this sheet need no weights, predictions or vectorising here.
+    manual = set(s["manual"])
     label = s["boundary_label"]
     # Boundary lines: train -> predict -> vectorise
-    if label in s["annotations"]:
+    if label in s["annotations"] and "boundaries" not in manual:
         if not s["weights"]["lines"]:
             return f"python run.py train-lines --sheet {sheet}"
         if not s["predictions"].get("boundaries"):
@@ -165,7 +170,7 @@ def suggest_next(s: dict) -> str | None:
         if "boundaries" not in s["layers"]:
             return f"python run.py vectorise-lines --sheet {sheet}"
     # Dashed lines
-    if "dashed" in s["annotations"]:
+    if "dashed" in s["annotations"] and "dashed" not in manual:
         if not s["weights"]["dashed"]:
             return "python run.py train-dashed"
         if not s["predictions"].get("dashed"):
@@ -174,7 +179,7 @@ def suggest_next(s: dict) -> str | None:
             return f"python run.py vectorise-dashed --sheet {sheet}"
     # MapSAM polygon features
     for f in s["annotations"]:
-        if f in _NON_MAPSAM or f == label:
+        if f in _NON_MAPSAM or f == label or f in manual:
             continue
         if f not in s["weights"]["mapsam"]:
             return f"python run.py train-polygons --sheet {sheet} --feature {f}"
@@ -241,6 +246,8 @@ def print_report(s: dict) -> None:
         print(f"  05 vectorise {CROSS}  no {s['gpkg'].name}")
     if s["mended"]:
         print(f"  (mended)     {s['mended'].name}: {', '.join(sorted(s['mended_layers']))}")
+    if s["manual"]:
+        print(f"  (manual)     hand-made layers: {', '.join(s['manual'])}")
 
     fb = s["feedback"]
     fb_bits = (["lines"] if fb["lines"] else []) + fb["polygons"]

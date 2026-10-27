@@ -20,6 +20,7 @@ paths:
   models_finetuned: models/finetuned/
   logs:             models/logs/
   parcel_points:    data/parcel_points/
+  manual_layers:    data/manual_layers/   # fully hand-made vector layers, one folder per sheet (import-manual)
 
 
 # Optional: reproject georeferenced maps before patchification.

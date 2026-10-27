@@ -45,7 +45,7 @@ sys.path.insert(0, str(ROOT / "steps"))                    # shared helpers
 sys.path.insert(0, str(Path(__file__).parent))             # topology_repair
 
 from common import load_config, rel_to_root, resolve_output_gpkg   # noqa: E402
-from geopackage import (add_raster_layer, announce_target,          # noqa: E402
+from geopackage import (add_raster_layer, allow_manual_replace, announce_target,          # noqa: E402
                         drop_vector_layer, write_patch_grid)
 from vectorise_common import stitch                                 # noqa: E402
 from topology_repair import repair_topology                         # noqa: E402
@@ -163,7 +163,11 @@ def main() -> None:
                              "paths.outputs_mended instead of paths.outputs.")
     target.add_argument("--gpkg", default=None,
                         help="Explicit output GeoPackage path (overrides --mended and the default).")
+    parser.add_argument("--replace-manual", action="store_true",
+                        help="Allow overwriting a manual layer (imported with import-manual) "
+                             "with this step's model output. Without it the step refuses.")
     args = parser.parse_args()
+    allow_manual_replace(args.replace_manual)
 
     cfg = load_config()
     boundary_label = cfg["annotation"].get("boundary_label", "boundary")

@@ -14,6 +14,7 @@ are not left deleting lines from patches you never meant to annotate.
     Enter                 save and close    Esc  close WITHOUT saving
 
 Green = selected.  Orange outline = that patch already has a labelme JSON.
+Blue outline (only with --name manual) = the patch contains features of a manual layer.
 
 Saved to  data/patches/selections/<SHEET_ID>.txt  (one patch id per line); an existing
 selection is loaded back in, so you can re-run this to adjust it.
@@ -22,12 +23,15 @@ Usage:
     python pick_patches.py --sheet SHEET_ID [--thumb 40]
 Then:
     python run.py autolines --sheet SHEET_ID --select --preview
+
+For your hand-made layers:  pick_patches.py --sheet SHEET_ID --name manual  (then export-manual).
 """
 
 from __future__ import annotations
 
 import argparse
 import re
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -66,17 +70,18 @@ class Picker:
     """Selection state + mouse/keyboard handling for the mosaic window."""
 
     def __init__(self, fig, ax, stems: list[str], cells: list[tuple[int, int]],
-                 selected: set[str], done: set[str]):
+                 selected: set[str], done: set[str], marked: set[str] = frozenset()):
         from matplotlib.collections import PatchCollection
         from matplotlib.patches import Rectangle
         self.fig, self.ax = fig, ax
         self.stems, self.cells = stems, cells
         self.at = {cell: i for i, cell in enumerate(cells)}            # (row, col) -> index
         self.sel = np.array([s in selected for s in stems], dtype=bool)
-        edge = np.array([(1.0, 0.55, 0.0, 1.0) if s in done else (0, 0, 0, 0.18) for s in stems])
+        edge = np.array([(1.0, 0.55, 0.0, 1.0) if s in done else (0.1, 0.4, 1.0, 1.0) if s in marked
+                         else (0, 0, 0, 0.18) for s in stems])
         self.coll = PatchCollection([Rectangle((c, r), 1, 1) for r, c in cells],
                                     facecolor="none", edgecolor=edge,
-                                    linewidths=[1.6 if s in done else 0.4 for s in stems])
+                                    linewidths=[1.6 if (s in done or s in marked) else 0.4 for s in stems])
         ax.add_collection(self.coll)
         self.band = None            # rubber-band artist while dragging
         self.press = None           # (x, y, pixel_x, pixel_y, button)
@@ -178,7 +183,22 @@ class Picker:
         self.fig.canvas.draw_idle()
 
 
-def pick(sheet_id: str, thumb: int | None) -> None:
+def patches_with_manual_features(cfg: dict, sheet_id: str) -> set[str]:
+    """Patch ids whose Patch_Grid row lists a manual layer (from the sheet's output GeoPackage)."""
+    gpkg = ROOT / cfg["paths"]["outputs"] / f"{sheet_id}.gpkg"
+    if not gpkg.exists():
+        return set()
+    con = sqlite3.connect(gpkg)
+    try:
+        return {r[0] for r in con.execute(
+            "SELECT patch_id FROM Patch_Grid WHERE manual_features IS NOT NULL AND manual_features != ''")}
+    except sqlite3.Error:
+        return set()                                   # Patch_Grid has no manual columns yet
+    finally:
+        con.close()
+
+
+def pick(sheet_id: str, thumb: int | None, name: str | None = None) -> None:
     cfg = load_config()
     patches_dir = ROOT / cfg["paths"]["patches"] / "images" / sheet_id
     json_dir = ROOT / cfg["paths"]["annotations"] / "labelme_json" / sheet_id
@@ -199,12 +219,13 @@ def pick(sheet_id: str, thumb: int | None) -> None:
     thumb = thumb or int(np.clip(2400 // span, 24, 96))      # keep the overview ~2400px across
     stems = [f.stem for f in files]
 
-    out = selection_file(cfg, sheet_id)
+    out = selection_file(cfg, sheet_id, name)
     selected = set()
     if out.exists():
         selected = {ln.strip() for ln in out.read_text().splitlines() if ln.strip() and not ln.startswith("#")}
         print(f"Loaded existing selection: {len(selected & set(stems))} patch(es) from {rel_to_root(out)}")
     done = {p.stem for p in json_dir.glob("*.json")} if json_dir.exists() else set()
+    marked = patches_with_manual_features(cfg, sheet_id) if name == "manual" else set()
 
     print(f"Sheet : {sheet_id}  |  {len(files)} patches on a {span}-cell-wide grid  |  thumbnails {thumb}px")
     mosaic, r0, c0, r1, c1 = build_mosaic(files, cells, thumb)
@@ -223,7 +244,7 @@ def pick(sheet_id: str, thumb: int | None) -> None:
     ax.set_xlim(c0, c1 + 1)
     ax.set_ylim(r1 + 1, r0)
     ax.set_xlabel("grid column"); ax.set_ylabel("grid row")
-    picker = Picker(fig, ax, stems, cells, selected, done)
+    picker = Picker(fig, ax, stems, cells, selected, done, marked)
     print("Window open: click / drag to select, Enter to save, Esc to cancel.")
     plt.tight_layout()
     plt.show()                                                # blocks until the window closes
@@ -237,6 +258,14 @@ def pick(sheet_id: str, thumb: int | None) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(chosen) + "\n")
     print(f"\nSaved {len(chosen)} patch(es) -> {rel_to_root(out)}")
+    if name == "manual":
+        print(
+            f"\nNext step: export these patches of your manual layers as training annotations\n"
+            f"  conda activate maptools\n"
+            f"  python run.py export-manual --sheet {sheet_id} --select\n"
+            f"  python run.py export-masks --sheet {sheet_id}"
+        )
+        return
     print(
         f"\nNext step: draw lines on just these patches (check the overlays first)\n"
         f"  conda activate maptools\n"
@@ -248,7 +277,10 @@ def pick(sheet_id: str, thumb: int | None) -> None:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Pick patches for autolines in a window.")
     ap.add_argument("--sheet", required=True, help="Sheet ID")
+    ap.add_argument("--name", default=None, choices=["manual"],
+                    help="Save under a separate name. 'manual' = choose patches of your manual layers "
+                         "for export-manual (kept apart from the autolines selection)")
     ap.add_argument("--thumb", type=int, default=None,
                     help="Thumbnail size in px (default: sized so the overview is ~2400px across)")
     args = ap.parse_args()
-    pick(args.sheet, args.thumb)
+    pick(args.sheet, args.thumb, args.name)

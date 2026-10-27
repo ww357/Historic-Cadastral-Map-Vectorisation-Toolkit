@@ -57,10 +57,17 @@ def find_raw(raw_root: Path, sheet_id: str) -> Path | None:
     return None
 
 
-def selection_file(cfg: dict, sheet_id: str) -> Path:
-    """Patch list saved by pick_patches.py and read by `autolines --select`
-    (one patch id per line): data/patches/selections/<sheet>.txt"""
-    return ROOT / cfg["paths"]["patches"] / "selections" / f"{sheet_id}.txt"
+def selection_file(cfg: dict, sheet_id: str, name: str | None = None) -> Path:
+    """Patch list saved by pick_patches.py (one patch id per line):
+    data/patches/selections/<sheet>.txt for `autolines --select`, or
+    <sheet>_<name>.txt for a named list (e.g. name="manual" for `export-manual --select`)."""
+    stem = sheet_id if not name else f"{sheet_id}_{name}"
+    return ROOT / cfg["paths"]["patches"] / "selections" / f"{stem}.txt"
+
+
+def manual_layers_dir(cfg: dict, sheet_id: str) -> Path:
+    """Folder holding fully hand-made vector layers for a sheet: data/manual_layers/<sheet>/"""
+    return ROOT / cfg["paths"].get("manual_layers", "data/manual_layers/") / sheet_id
 
 
 def find_mask(mask_dir: Path, sheet_id: str) -> Path | None:

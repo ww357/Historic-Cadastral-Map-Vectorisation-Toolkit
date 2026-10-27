@@ -62,6 +62,7 @@ from tqdm import tqdm
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
 from common import find_mended, find_raw, load_config, resolve_input_gpkg   # noqa: E402
+from geopackage import manual_layers   # noqa: E402
 
 MANIFEST_COLS = ["split", "image_path", "mask_path", "sheet", "source", "tier"]
 
@@ -340,6 +341,10 @@ def main():
     manifest_rows, existing_paths = load_or_create_manifest(dataset_dir)
 
     # ---- Boundaries GeoPackage ---------------------------------------------
+    if "boundaries" in manual_layers(gpkg_path):
+        sys.exit(f"The 'boundaries' layer in {gpkg_path.name} is a MANUAL layer (imported with "
+                 f"import-manual), not a model prediction, so there are no corrections to learn from.\n"
+                 f"To use it as training data instead:  python run.py export-manual --sheet {sheet_id}")
     try:
         boundaries_gdf = gpd.read_file(gpkg_path, layer="boundaries")
     except Exception as e:

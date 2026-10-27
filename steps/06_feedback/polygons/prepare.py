@@ -40,6 +40,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
 from common import find_mended, find_raw, resolve_input_gpkg   # noqa: E402
+from geopackage import manual_layers   # noqa: E402
 
 # -- PROJ / rasterio compat ----------------------------------------------------
 if "PROJ_DATA" not in os.environ:
@@ -230,9 +231,13 @@ def main() -> None:
             f"Run predict.py + vectorise.py for feature '{args.feature}' first, "
             "then correct in QGIS."
         )
+    if args.feature in manual_layers(gpkg_path):
+        sys.exit(f"The '{args.feature}' layer in {gpkg_path.name} is a MANUAL layer (imported with "
+                 f"import-manual), not a model prediction, so there are no corrections to learn from.\n"
+                 f"To use it as training data instead:  python run.py export-manual --sheet {args.sheet}")
+
     if tif_path is None:
         sys.exit(f"Raw map not found for '{args.sheet}' in {ROOT / paths['raw'] / args.sheet}/")
-
     (out_dir / "images").mkdir(parents=True, exist_ok=True)
     (out_dir / "masks").mkdir(parents=True, exist_ok=True)
 

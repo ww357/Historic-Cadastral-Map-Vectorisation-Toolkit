@@ -24,6 +24,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
+from geopackage import allow_manual_replace, guard_manual   # noqa: E402
 from common import load_config, rel_to_root, resolve_output_gpkg   # noqa: E402
 
 
@@ -41,13 +42,18 @@ def main():
     target.add_argument("--gpkg", default=None,
                         help="Explicit output GeoPackage path (overrides --mended "
                              "and the default).")
+    parser.add_argument("--replace-manual", action="store_true",
+                        help="Allow overwriting a manual layer (imported with import-manual) "
+                             "with this step's model output. Without it the step refuses.")
     args = parser.parse_args()
+    allow_manual_replace(args.replace_manual)
     sheet_id = args.sheet
 
     cfg       = yaml.safe_load((ROOT / "config.yaml").read_text())
     paths     = cfg["paths"]
     geojson   = ROOT / paths["predictions"] / "text" / sheet_id / "text_preds.geojson"
     gpkg_path = resolve_output_gpkg(sheet_id, cfg, args.gpkg, args.mended)
+    guard_manual(gpkg_path, ["text"])
 
     if not geojson.exists():
         sys.exit(f"GeoJSON not found: {geojson}")
