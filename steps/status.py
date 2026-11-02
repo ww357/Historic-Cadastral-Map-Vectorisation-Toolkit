@@ -32,14 +32,15 @@ TICK, CROSS = "OK", "--"
 # Feature folders that are not MapSAM polygon classes; everything else found
 # under annotations/ or predictions/ is treated as a MapSAM feature.
 _NON_MAPSAM = {"boundaries", "dashed", "text", "parcels", "parcel"}
-
+# maybe best to not hard code boundaries (which could be line, lines, solid,
+# boundaries, etc.) or parcels. Maybe text can stay hardcoded.
 
 def _count_pngs(d: Path) -> int:
     return len(list(d.glob("*.png"))) if d.is_dir() else 0
 
 
 def _gpkg_layers(path: Path) -> list[str]:
-    """Layer names in a GeoPackage, via sqlite3 (no geopandas/fiona needed)."""
+    """Layer names in a GeoPackage with sqlite3."""
     if not path.exists():
         return []
     con = sqlite3.connect(str(path))
