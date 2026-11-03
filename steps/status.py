@@ -32,15 +32,15 @@ TICK, CROSS = "OK", "--"
 # Feature folders that are not MapSAM polygon classes; everything else found
 # under annotations/ or predictions/ is treated as a MapSAM feature.
 _NON_MAPSAM = {"boundaries", "dashed", "text", "parcels", "parcel"}
-# maybe best to not hard code boundaries (which could be line, lines, solid,
-# boundaries, etc.) or parcels. Maybe text can stay hardcoded.
+SHEET_COL_WIDTH = 19     # width of the 'sheet' column in the summary table; longer names are clipped with "..."
+
 
 def _count_pngs(d: Path) -> int:
     return len(list(d.glob("*.png"))) if d.is_dir() else 0
 
 
 def _gpkg_layers(path: Path) -> list[str]:
-    """Layer names in a GeoPackage with sqlite3."""
+    """Layer names in a GeoPackage, via sqlite3 (no geopandas/fiona needed)."""
     if not path.exists():
         return []
     con = sqlite3.connect(str(path))
@@ -262,12 +262,14 @@ def print_report(s: dict) -> None:
 
 def print_summary(sheets: list[str], cfg: dict) -> None:
     """One line per sheet: counts at each stage."""
-    print(f"\n{'sheet':<28} {'patches':>8} {'annot':>6} {'preds':>6}  layers")
-    print("-" * 76)
+    w = SHEET_COL_WIDTH
+    print(f"\n{'sheet':<{w}} {'patches':>8} {'annot':>6} {'preds':>6}  layers")
+    print("-" * (w + 48))
     for sheet in sheets:
         s = gather(sheet, cfg)
         n_pred = sum(1 for v in s["predictions"].values() if v)
-        print(f"{sheet:<28} {s['patches']:>8} {len(s['annotations']):>6} {n_pred:>6}  "
+        shown = sheet if len(sheet) <= w else sheet[:w - 3] + "..."   # clip long names to the column
+        print(f"{shown:<{w}} {s['patches']:>8} {len(s['annotations']):>6} {n_pred:>6}  "
               f"{', '.join(sorted(s['layers'])) or '-'}")
     print(f"\nRun 'python run.py status --sheet SHEET' for a full breakdown.\n")
 
