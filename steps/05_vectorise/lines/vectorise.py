@@ -45,8 +45,8 @@ sys.path.insert(0, str(ROOT / "steps"))                    # shared helpers
 sys.path.insert(0, str(Path(__file__).parent))             # topology_repair
 
 from common import load_config, rel_to_root, resolve_output_gpkg   # noqa: E402
-from geopackage import (add_raster_layer, allow_manual_replace, announce_target,          # noqa: E402
-                        drop_vector_layer, write_patch_grid)
+from geopackage import (add_raster_layer, add_safety_flags, apply_safety_flags, announce_target,          # noqa: E402
+                        drop_vector_layer, stamp_layer, write_patch_grid)
 from vectorise_common import stitch                                 # noqa: E402
 from topology_repair import repair_topology                         # noqa: E402
 
@@ -131,6 +131,7 @@ def vectorise(sheet_id: str, cfg: dict, stitched_path: Path, georef: dict,
     drop_vector_layer(out_path, "boundaries")
     write_mode = "a" if out_path.exists() else "w"
     gdf.to_file(out_path, driver="GPKG", layer="boundaries", mode=write_mode)
+    stamp_layer(out_path, "boundaries")            # edit tracking: later changes in QGIS are detected
     print(f"\nSaved -> {rel_to_root(out_path)}")
     print(f"  boundaries (vector):  {len(gdf):,} features  |  "
           f"total length: {gdf['length'].sum():,.1f} map units"
@@ -163,11 +164,9 @@ def main() -> None:
                              "paths.outputs_mended instead of paths.outputs.")
     target.add_argument("--gpkg", default=None,
                         help="Explicit output GeoPackage path (overrides --mended and the default).")
-    parser.add_argument("--replace-manual", action="store_true",
-                        help="Allow overwriting a manual layer (imported with import-manual) "
-                             "with this step's model output. Without it the step refuses.")
+    add_safety_flags(parser)
     args = parser.parse_args()
-    allow_manual_replace(args.replace_manual)
+    apply_safety_flags(args)
 
     cfg = load_config()
     boundary_label = cfg["annotation"].get("boundary_label", "boundary")

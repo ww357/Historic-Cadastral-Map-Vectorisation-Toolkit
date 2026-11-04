@@ -40,7 +40,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
 from common import find_mended, find_raw, resolve_input_gpkg   # noqa: E402
-from geopackage import manual_layers   # noqa: E402
+from geopackage import layer_edit_state, manual_layers, warn_if_open   # noqa: E402
 
 # -- PROJ / rasterio compat ----------------------------------------------------
 if "PROJ_DATA" not in os.environ:
@@ -206,6 +206,9 @@ def main() -> None:
                              "file exists and this flag is omitted.")
     source.add_argument("--gpkg", default=None,
                         help="Explicit GeoPackage path to read (overrides --mended and the default).")
+    parser.add_argument("--allow-unmended", action="store_true",
+                        help="Proceed even if the layer is exactly as the model wrote it (not mended yet). "
+                             "Feedback would then treat the model's own output as ground truth.")
     args = parser.parse_args()
 
     cfg   = yaml.safe_load((ROOT / args.config).read_text())
@@ -236,6 +239,15 @@ def main() -> None:
                  f"import-manual), not a model prediction, so there are no corrections to learn from.\n"
                  f"To use it as training data instead:  python run.py export-manual --sheet {args.sheet}")
 
+    warn_if_open(gpkg_path)
+    _state = layer_edit_state(gpkg_path, args.feature)
+    if _state == "unchanged" and not args.allow_unmended:
+        sys.exit(f"The '{args.feature}' layer in {gpkg_path.name} is exactly as the model wrote it - it has not "
+                 f"been mended, so feedback would train on the model's own output as if it were correct.\n"
+                 f"  Mend it in QGIS and save the edits, then re-run (--allow-unmended overrides).")
+    print(f"Mending    : '{args.feature}' layer is " + {
+        "edited": "EDITED since the model wrote it", "unchanged": "unchanged (--allow-unmended)",
+        "untracked": "untracked (no edit record, so it cannot be checked)"}.get(_state, _state))
     if tif_path is None:
         sys.exit(f"Raw map not found for '{args.sheet}' in {ROOT / paths['raw'] / args.sheet}/")
     (out_dir / "images").mkdir(parents=True, exist_ok=True)

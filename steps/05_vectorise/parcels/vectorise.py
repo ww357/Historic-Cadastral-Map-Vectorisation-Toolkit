@@ -31,7 +31,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
-from geopackage import allow_manual_replace, guard_manual   # noqa: E402
+from geopackage import add_safety_flags, apply_safety_flags, guard_write, stamp_layer   # noqa: E402
 from common import rel_to_root, resolve_output_gpkg   # noqa: E402
 
 # -- PROJ database fix ---------------------------------------------------------
@@ -203,11 +203,9 @@ def main() -> None:
     # Deprecated aliases from when this step defaulted to mended-if-exists.
     target.add_argument("--output", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--no-mended", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--replace-manual", action="store_true",
-                        help="Allow overwriting a manual layer (imported with import-manual) "
-                             "with this step's model output. Without it the step refuses.")
+    add_safety_flags(parser)
     args = parser.parse_args()
-    allow_manual_replace(args.replace_manual)
+    apply_safety_flags(args)
 
     if args.output:
         print("Note: --output is deprecated - use --gpkg instead.")
@@ -234,7 +232,7 @@ def main() -> None:
     # sits alongside the mended boundary/text/Patch_Grid layers (ogr2ogr -update
     # adds only this layer and preserves the others).
     gpkg_path = resolve_output_gpkg(sheet_id, cfg, args.gpkg or args.output, args.mended)
-    guard_manual(gpkg_path, ["parcels"])
+    guard_write(gpkg_path, ["parcels"])
 
     if not pred_geojson.exists():
         sys.exit(
@@ -438,6 +436,7 @@ def main() -> None:
             )
     finally:
         tmp.unlink(missing_ok=True)
+    stamp_layer(gpkg_path, "parcels")              # edit tracking: later changes in QGIS are detected
 
     print(f"\nDone - {len(features_out):,} parcels in 'parcels' layer of {gpkg_path.name}")
     print(

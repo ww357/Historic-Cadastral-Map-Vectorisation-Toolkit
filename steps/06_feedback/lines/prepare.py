@@ -62,7 +62,7 @@ from tqdm import tqdm
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
 from common import find_mended, find_raw, load_config, resolve_input_gpkg   # noqa: E402
-from geopackage import manual_layers   # noqa: E402
+from geopackage import layer_edit_state, manual_layers, warn_if_open   # noqa: E402
 
 MANIFEST_COLS = ["split", "image_path", "mask_path", "sheet", "source", "tier"]
 
@@ -304,6 +304,9 @@ def main():
                              "file exists and this flag is omitted.")
     source.add_argument("--gpkg", default=None,
                         help="Explicit GeoPackage path to read (overrides --mended and the default).")
+    parser.add_argument("--allow-unmended", action="store_true",
+                        help="Proceed even if the layer is exactly as the model wrote it (not mended yet). "
+                             "Feedback would then treat the model's own output as ground truth.")
     args = parser.parse_args()
 
     sheet_id   = args.sheet
@@ -341,6 +344,15 @@ def main():
     manifest_rows, existing_paths = load_or_create_manifest(dataset_dir)
 
     # ---- Boundaries GeoPackage ---------------------------------------------
+    warn_if_open(gpkg_path)
+    _state = layer_edit_state(gpkg_path, "boundaries")
+    if _state == "unchanged" and not args.allow_unmended:
+        sys.exit(f"The 'boundaries' layer in {gpkg_path.name} is exactly as the model wrote it - it has not "
+                 f"been mended, so feedback would train on the model's own output as if it were correct.\n"
+                 f"  Mend it in QGIS and save the edits, then re-run (--allow-unmended overrides).")
+    print(f"Mending    : 'boundaries' layer is " + {
+        "edited": "EDITED since the model wrote it", "unchanged": "unchanged (--allow-unmended)",
+        "untracked": "untracked (no edit record, so it cannot be checked)"}.get(_state, _state))
     if "boundaries" in manual_layers(gpkg_path):
         sys.exit(f"The 'boundaries' layer in {gpkg_path.name} is a MANUAL layer (imported with "
                  f"import-manual), not a model prediction, so there are no corrections to learn from.\n"

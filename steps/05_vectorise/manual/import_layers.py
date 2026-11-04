@@ -46,7 +46,8 @@ from pyproj import CRS
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
 from common import load_config, manual_layers_dir, rel_to_root, resolve_output_gpkg   # noqa: E402
-from geopackage import MANUAL_TAG, layer_exists, manual_layers, drop_vector_layer, write_patch_grid   # noqa: E402
+from geopackage import (MANUAL_TAG, add_safety_flags, apply_safety_flags, drop_vector_layer, guard_write,   # noqa: E402
+                        layer_exists, manual_layers, stamp_layer, write_patch_grid)
 from vectorise_common import sheet_georef   # noqa: E402
 
 # Files that sit beside a vector layer (shapefile parts, QGIS styles, notes) - never layers.
@@ -198,7 +199,9 @@ def main() -> None:
     target.add_argument("--mended", action="store_true",
                         help="Write into the hand-corrected GeoPackage in paths.outputs_mended")
     target.add_argument("--gpkg", default=None, help="Explicit output GeoPackage (overrides --mended and the default)")
+    add_safety_flags(ap, manual=False)
     args = ap.parse_args()
+    apply_safety_flags(args)
 
     cfg, sheet = load_config(), args.sheet
     folder = manual_layers_dir(cfg, sheet)
@@ -266,15 +269,23 @@ def main() -> None:
 
     # -- write -------------------------------------------------------------------
     already_manual = set(manual_layers(out_path))
-    written, blocked = [], []
-    for name, gdf, *_ in prepared:
+    to_write, blocked = [], []
+    for item in prepared:
+        name = item[0]
         if layer_exists(out_path, name) and name not in already_manual and not args.replace_existing:
             blocked.append(name)
-            continue
+        else:
+            to_write.append(item)
+    # Open-in-QGIS, edited-layer and backup protection for everything about to be replaced
+    # (a manual layer you corrected in QGIS counts as edited too).
+    guard_write(out_path, [it[0] for it in to_write], manual_ok=True)
+    written = []
+    for name, gdf, *_ in to_write:
         replacing = layer_exists(out_path, name)
         drop_vector_layer(out_path, name)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         gdf.to_file(out_path, driver="GPKG", layer=name, mode="a" if out_path.exists() else "w")
+        stamp_layer(out_path, name)
         written.append(name + (" (replaced)" if replacing else ""))
     print(f"\nWrote {len(written)} layer(s) to {rel_to_root(out_path)}: {', '.join(written) or '-'}")
     if blocked:

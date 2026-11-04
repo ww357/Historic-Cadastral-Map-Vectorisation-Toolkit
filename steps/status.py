@@ -25,7 +25,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
 from common import find_raw, load_config   # noqa: E402
-from geopackage import manual_layers   # noqa: E402
+from geopackage import layer_edit_state, manual_layers, vector_layers, open_elsewhere   # noqa: E402
 
 TICK, CROSS = "OK", "--"
 
@@ -63,7 +63,7 @@ def _resolve_mended(mended_dir: Path, sheet: str) -> Path | None:
     return hits[0] if hits else None
 
 
-def gather(sheet: str, cfg: dict) -> dict:
+def gather(sheet: str, cfg: dict, detail: bool = False) -> dict:
     """Collect every on-disk fact about one sheet. No printing."""
     paths = cfg["paths"]
     boundary_label = cfg.get("annotation", {}).get("boundary_label", "boundary")
@@ -144,6 +144,9 @@ def gather(sheet: str, cfg: dict) -> dict:
         "mended": mended, "mended_layers": _gpkg_layers(mended) if mended else [],
         # layers imported with import-manual (hand-made, features tagged source='manual')
         "manual": sorted(set(manual_layers(gpkg)) | set(manual_layers(mended) if mended else [])),
+        # per-layer edit state of data/outputs (hashes every layer, so only for the detailed report)
+        "layer_states": ({l: layer_edit_state(gpkg, l) for l in vector_layers(gpkg)} if detail else {}),
+        "open_in": open_elsewhere(gpkg) if detail and gpkg.exists() else [],
         "feedback": feedback, "boundary_label": boundary_label,
     }
 
@@ -242,13 +245,22 @@ def print_report(s: dict) -> None:
         print(f"  (stitched)   {', '.join(sorted(s['stitched']))}")
 
     if s["layers"]:
-        print(f"  05 vectorise {TICK}  {s['gpkg'].name}: {', '.join(sorted(s['layers']))}")
+        # layer names, with how each vector layer stands: edited = changed since the toolkit
+        # wrote it (mended), untracked = no edit record, manual = imported hand-made layer
+        label = {"edited": "edited", "untracked": "untracked"}
+        shown = [f"{n} [manual]" if n in s["manual"] else
+                 (f"{n} [{label[s['layer_states'][n]]}]" if s["layer_states"].get(n) in label else n)
+                 for n in sorted(s["layers"])]
+        print(f"  05 vectorise {TICK}  {s['gpkg'].name}: {', '.join(shown)}")
     else:
         print(f"  05 vectorise {CROSS}  no {s['gpkg'].name}")
     if s["mended"]:
         print(f"  (mended)     {s['mended'].name}: {', '.join(sorted(s['mended_layers']))}")
     if s["manual"]:
         print(f"  (manual)     hand-made layers: {', '.join(s['manual'])}")
+    if s["open_in"]:
+        print(f"  ! {s['gpkg'].name} is open in {', '.join(s['open_in'])} - vectorise/import steps will "
+              f"refuse to run until it is closed, and unsaved edits are not in the file")
 
     fb = s["feedback"]
     fb_bits = (["lines"] if fb["lines"] else []) + fb["polygons"]
@@ -282,7 +294,7 @@ def main() -> None:
 
     cfg = load_config()
     if args.sheet:
-        print_report(gather(args.sheet, cfg))
+        print_report(gather(args.sheet, cfg, detail=True))
         return
 
     raw_root = ROOT / cfg["paths"]["raw"]

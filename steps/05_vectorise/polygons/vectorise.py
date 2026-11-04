@@ -47,8 +47,8 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "steps"))
 
 from common import load_config, rel_to_root, resolve_output_gpkg   # noqa: E402
-from geopackage import (add_raster_layer, allow_manual_replace, announce_target,          # noqa: E402
-                        drop_vector_layer, write_patch_grid)
+from geopackage import (add_raster_layer, add_safety_flags, apply_safety_flags, announce_target,          # noqa: E402
+                        drop_vector_layer, stamp_layer, write_patch_grid)
 from vectorise_common import stitch                                 # noqa: E402
 
 # Feature folders under data/predictions/ that are not MapSAM polygon classes.
@@ -139,6 +139,7 @@ def vectorise(sheet_id: str, feature: str, cfg: dict, stitched_path: Path,
     drop_vector_layer(out_path, feature)
     write_mode = "a" if out_path.exists() else "w"
     gdf.to_file(out_path, driver="GPKG", layer=feature, mode=write_mode)
+    stamp_layer(out_path, feature)                 # edit tracking: later changes in QGIS are detected
     print(f"\nSaved -> {rel_to_root(out_path)}")
     print(f"  {feature} (vector):  {len(gdf):,} polygons  |  "
           f"total area: {gdf['area'].sum():,.1f} map units2")
@@ -172,11 +173,9 @@ def main() -> None:
                              "paths.outputs_mended instead of paths.outputs.")
     target.add_argument("--gpkg", default=None,
                         help="Explicit output GeoPackage path (overrides --mended and the default).")
-    parser.add_argument("--replace-manual", action="store_true",
-                        help="Allow overwriting a manual layer (imported with import-manual) "
-                             "with this step's model output. Without it the step refuses.")
+    add_safety_flags(parser)
     args = parser.parse_args()
-    allow_manual_replace(args.replace_manual)
+    apply_safety_flags(args)
 
     cfg = load_config()
     out_path = resolve_output_gpkg(args.sheet, cfg, args.gpkg, args.mended)

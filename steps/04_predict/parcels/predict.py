@@ -66,6 +66,7 @@ import os
 import sqlite3
 import struct
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
@@ -73,7 +74,8 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
-from common import find_raw, load_config   # noqa: E402
+from common import find_raw, load_config, rel_to_root   # noqa: E402
+from geopackage import layer_edit_state, warn_if_open   # noqa: E402
 
 # -- PROJ database fix (mirror of the SAM parcel scripts) -----------------------
 # pyproj can fail to locate proj.db in pip-installed conda envs.  We never need
@@ -257,6 +259,14 @@ def rasterize_lines(lines: list[np.ndarray], transform: "Affine",
 _LINEAR_FEATURES = {"boundaries", "dashed"}
 
 
+@dataclass(frozen=True)
+class LineSource:
+    """Where linear features are read from INSTEAD of the stitched model rasters: a GeoPackage,
+    and which of its line layers to use (None = every line layer in it)."""
+    path: Path
+    layers: frozenset[str] | None = None
+
+
 def _canon_feature(name: str) -> str:
     """'lines' is a user-facing alias for the 'boundaries' folder/layer."""
     return "boundaries" if name.lower() == "lines" else name.lower()
@@ -264,15 +274,15 @@ def _canon_feature(name: str) -> str:
 
 def load_feature_binary(feature: str, sheet: str, cfg: dict,
                         transform: "Affine", H: int, W: int,
-                        mended_path: Path | None, mend_width: int,
+                        line_source: LineSource | None, mend_width: int,
                         override_path: Path | None = None) -> np.ndarray | None:
     """
     Return an (H, W) bool array (True = feature present) for one feature, or None
     if no source raster/layer exists for it.
 
     override_path (from --boundary) wins if given.  Otherwise boundaries/dashed
-    prefer a mended GeoPackage line layer (rasterised) when a mended file is in
-    play, and every feature falls back to its stitched raster at
+    prefer the corrected GeoPackage line layer (rasterised) when a line source is in
+    play (--mended / --gpkg, or a layer you edited in place), and every feature falls back to its stitched raster at
     data/stitched/<feature>/<sheet>.tif.
     """
     paths = cfg["paths"]
@@ -289,14 +299,15 @@ def load_feature_binary(feature: str, sheet: str, cfg: dict,
         return arr > 0
 
     # Linear features from a mended GeoPackage line layer, if available.
-    if feature in _LINEAR_FEATURES and mended_path is not None:
+    if feature in _LINEAR_FEATURES and line_source is not None:
         layer = "boundaries" if feature == "boundaries" else feature
-        try:
-            lines = read_gpkg_lines_wkb(mended_path, layer=layer)
-            if lines:
-                return rasterize_lines(lines, transform, H, W, mend_width) > 0
-        except ValueError:
-            pass  # layer absent in this mended file - fall through to stitched raster
+        if line_source.layers is None or layer in line_source.layers:
+            try:
+                lines = read_gpkg_lines_wkb(line_source.path, layer=layer)
+                if lines:
+                    return rasterize_lines(lines, transform, H, W, mend_width) > 0
+            except ValueError:
+                pass  # layer absent in this GeoPackage - fall through to stitched raster
 
     stitched = ROOT / paths["stitched"] / feature / f"{sheet}.tif"
     if not stitched.exists():
@@ -420,6 +431,10 @@ def main() -> None:
                          "mended file exists and this flag is omitted.")
     # Deprecated: this step used to read the mended file automatically.
     ap.add_argument("--no-mended", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--gpkg", default=None,
+                    help="Read the line layers (boundaries/dashed) from this GeoPackage instead of the "
+                         "model rasters - e.g. data/outputs/<sheet>.gpkg for a layer you mended in place "
+                         "that has no edit record. Overrides the automatic use of edited layers.")
     ap.add_argument("--extent", nargs="+", default=None, metavar="FEATURE",
                     help="Features whose footprint acts as a wall the flood will not cross "
                          "(kept inside parcels). e.g. --extent boundaries dashed building. "
@@ -489,15 +504,41 @@ def main() -> None:
     # --mended swaps the linear layers (boundaries/dashed) for the hand-corrected
     # line layers, rasterised in load_feature_binary. Opt-in, like every other step:
     # results should not silently change because a file appeared in a folder.
+    if args.mended and args.gpkg:
+        sys.exit("Use either --mended or --gpkg, not both.")
     mended_path = resolve_mended(mended_dir, sheet) if args.mended else None
     if args.mended and mended_path is None:
         sys.exit(
             f"--mended: no GeoPackage for sheet '{sheet}' in {mended_dir}\n"
             f"Looked for '{sheet}.gpkg' and any *.gpkg with '{sheet}' in the name."
         )
-    if mended_path is not None:
-        print(f"Mended    : {mended_path.relative_to(ROOT)}  (line layers used where present)")
+    line_source = None
+    if args.gpkg:
+        gp = Path(args.gpkg) if Path(args.gpkg).is_absolute() else ROOT / args.gpkg
+        if not gp.exists():
+            sys.exit(f"--gpkg: not found: {gp}")
+        line_source = LineSource(gp)
+        print(f"Lines from: {rel_to_root(gp)}  (--gpkg: line layers used where present)")
+    elif mended_path is not None:
+        line_source = LineSource(mended_path)
+        print(f"Mended    : {rel_to_root(mended_path)}  (line layers used where present)")
     else:
+        # Corrections made in place: use any line layer of the sheet's output GeoPackage that has
+        # been edited since the toolkit wrote it; everything else still comes from the model rasters.
+        out_gpkg = ROOT / paths["outputs"] / f"{sheet}.gpkg"
+        states = {l: layer_edit_state(out_gpkg, l) for l in sorted(_LINEAR_FEATURES)} if out_gpkg.exists() else {}
+        edited = frozenset(l for l, s in states.items() if s == "edited")
+        if edited:
+            warn_if_open(out_gpkg)
+            line_source = LineSource(out_gpkg, edited)
+            print(f"Edited    : {rel_to_root(out_gpkg)}  (using your corrected layer(s): "
+                  f"{', '.join(sorted(edited))}; other lines come from the model rasters)")
+        for l, s in states.items():
+            if s == "untracked":
+                print(f"  ! '{l}' in {out_gpkg.name} has no edit record, so it cannot be told apart from raw "
+                      f"model output and the model raster is used.\n"
+                      f"    If you mended it, run with:  --gpkg {rel_to_root(out_gpkg)}")
+    if mended_path is None:
         available = resolve_mended(mended_dir, sheet)
         if available is not None:
             print(
@@ -529,13 +570,13 @@ def main() -> None:
             epsg = None
 
     surf, boundary_vis = build_ridge_surface(
-        sheet, cfg, extent_features, transform, H, W, mended_path, mend_width,
+        sheet, cfg, extent_features, transform, H, W, line_source, mend_width,
         boundary_override=Path(args.boundary) if args.boundary else None,
         dashed_weight=dashed_weight, feature_weight=feature_weight,
         close_px=close_px, sigma=sigma,
     )
     exclude_mask = build_exclusion_mask(sheet, cfg, exclude_features, transform,
-                                        H, W, mended_path, mend_width)
+                                        H, W, line_source, mend_width)
 
     mask = load_map_mask(sheet, cfg, W, H, use_mask)
     if exclude_mask.any():   # carve excluded features out of the flood area (holes)
@@ -571,7 +612,7 @@ def main() -> None:
     print(f"\nNext:  python run.py vectorise-parcels --sheet {sheet}")
 
 
-def build_ridge_surface(sheet, cfg, extent_features, transform, H, W, mended_path,
+def build_ridge_surface(sheet, cfg, extent_features, transform, H, W, line_source,
                         mend_width, *, boundary_override, dashed_weight,
                         feature_weight, close_px, sigma):
     """Combine every extent feature into one watershed ridge surface.
@@ -588,7 +629,7 @@ def build_ridge_surface(sheet, cfg, extent_features, transform, H, W, mended_pat
     for feat in extent_features:
         # --boundary overrides the raster used for the 'boundaries' feature only.
         override = boundary_override if feat == "boundaries" else None
-        b = load_feature_binary(feat, sheet, cfg, transform, H, W, mended_path,
+        b = load_feature_binary(feat, sheet, cfg, transform, H, W, line_source,
                                 mend_width, override_path=override)
         if b is None:
             print(f"  extent '{feat}': no raster/layer found - skipped")
@@ -621,11 +662,11 @@ def build_ridge_surface(sheet, cfg, extent_features, transform, H, W, mended_pat
 
 
 def build_exclusion_mask(sheet, cfg, exclude_features, transform, H, W,
-                         mended_path, mend_width):
+                         line_source, mend_width):
     """Union of the areal features to carve OUT of every parcel (become holes)."""
     exclude_mask = np.zeros((H, W), dtype=bool)
     for feat in exclude_features:
-        b = load_feature_binary(feat, sheet, cfg, transform, H, W, mended_path, mend_width)
+        b = load_feature_binary(feat, sheet, cfg, transform, H, W, line_source, mend_width)
         if b is None:
             print(f"  exclude '{feat}': no raster found - skipped")
             continue
