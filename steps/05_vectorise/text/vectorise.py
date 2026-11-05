@@ -24,7 +24,8 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
-from geopackage import add_safety_flags, apply_safety_flags, guard_write, stamp_layer   # noqa: E402
+from geopackage import (add_safety_flags, apply_safety_flags, guard_write, stamp_layer,   # noqa: E402
+                        tag_semi_auto)
 from common import load_config, rel_to_root, resolve_output_gpkg   # noqa: E402
 
 
@@ -70,6 +71,8 @@ def main():
     if str_cols:
         print(f"  Casting StringDtype columns: {str_cols}")
         gdf[str_cols] = gdf[str_cols].astype(object)
+
+    gdf = tag_semi_auto(gdf)        # source = 'semi_auto': model output meant to be mended
 
     # Drop existing text layer from GeoPackage (safe if it doesn't exist)
     if gpkg_path.exists():

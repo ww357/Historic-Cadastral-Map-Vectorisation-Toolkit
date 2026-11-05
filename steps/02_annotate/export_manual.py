@@ -24,6 +24,10 @@ Choose patches (one option required):
   --limit N           N patches spread across the sheet, from those that contain manual features
   --all               every patch that contains manual features
 
+Patches already annotated for the same feature (by hand in labelme, or with an existing mask)
+are left exactly as they are, so training data already in the toolkit is never doubled up.
+--include-annotated adds the layer's shapes there too.
+
 Usage:
     python export_manual.py --sheet SHEET_ID --select [--layers houses bog] [--overwrite]
                             [--empty-patches] [--mended | --gpkg PATH]
@@ -112,6 +116,9 @@ def main() -> None:
     ap.add_argument("--layers", nargs="+", default=None, help="Only these manual layers (default: all)")
     ap.add_argument("--overwrite", action="store_true",
                     help="Replace manual-layer shapes already exported for a patch")
+    ap.add_argument("--include-annotated", action="store_true",
+                    help="Also add the layer's shapes to patches already annotated for the same feature "
+                         "(default: those patches are left exactly as they are)")
     ap.add_argument("--empty-patches", action="store_true",
                     help="Also write an empty annotation for chosen patches with no features "
                          "(a confirmed 'nothing here' example; only the dashed trainer uses these)")
@@ -192,7 +199,9 @@ def main() -> None:
     print(f"Patches    : {len(chosen)}")
     print(f"JSON output: {rel_to_root(json_dir)}\n")
 
+    ann_root = ROOT / cfg["paths"]["annotations"]
     written = skipped_done = skipped_empty = 0
+    annotated_skips: Counter = Counter()                  # label -> patches left alone (already annotated)
     per_label: Counter = Counter()
     stats: Counter = Counter()
     for pid in chosen:
@@ -218,6 +227,20 @@ def main() -> None:
             if len(keep) != len(old.get("shapes", [])) and not args.overwrite:
                 skipped_done += 1                                  # already exported earlier
                 continue
+        # Training data already in the toolkit wins: where this patch is already annotated for a
+        # label (drawn by hand / pre-drawn in labelme, or a mask exists from another route), the
+        # layer's shapes for that label are not added on top.
+        if shapes and not args.include_annotated:
+            hand = {s.get("label") for s in keep}
+            if not jp.exists():
+                hand |= {lab for lab in {s["label"] for s in shapes}
+                         if (ann_root / lab / sheet / "masks" / f"{pid}.png").exists()}
+            blocked = {s["label"] for s in shapes} & hand
+            if blocked:
+                annotated_skips.update(blocked)
+                shapes = [s for s in shapes if s["label"] not in blocked]
+                if not shapes:
+                    continue
         if not shapes:
             if jp.exists() and args.overwrite:
                 write_labelme_json(jp, patches_dir / f"{pid}.png", [], w, h, keep)   # drop stale manual shapes
@@ -233,6 +256,10 @@ def main() -> None:
 
     print(f"Wrote {written} annotation file(s)  |  {sum(per_label.values())} shape(s): "
           + ", ".join(f"{k}={v}" for k, v in sorted(per_label.items())))
+    if annotated_skips:
+        print("Left alone because already annotated for the same feature (your annotation wins): "
+              + ", ".join(f"{k} ({v} patch(es))" for k, v in sorted(annotated_skips.items()))
+              + "  - use --include-annotated to add the layer's shapes anyway")
     if skipped_done:
         print(f"Skipped {skipped_done} patch(es) already exported (use --overwrite to refresh them)")
     if skipped_empty:

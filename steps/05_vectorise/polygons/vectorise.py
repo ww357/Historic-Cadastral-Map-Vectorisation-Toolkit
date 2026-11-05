@@ -48,7 +48,7 @@ sys.path.insert(0, str(ROOT / "steps"))
 
 from common import load_config, rel_to_root, resolve_output_gpkg   # noqa: E402
 from geopackage import (add_raster_layer, add_safety_flags, apply_safety_flags, announce_target,          # noqa: E402
-                        drop_vector_layer, stamp_layer, write_patch_grid)
+                        drop_vector_layer, stamp_layer, tag_semi_auto, write_patch_grid)
 from vectorise_common import stitch                                 # noqa: E402
 
 # Feature folders under data/predictions/ that are not MapSAM polygon classes.
@@ -136,6 +136,7 @@ def vectorise(sheet_id: str, feature: str, cfg: dict, stitched_path: Path,
         crs=crs if has_georef else None,
     )
 
+    gdf = tag_semi_auto(gdf)        # source = 'semi_auto': model output meant to be mended
     drop_vector_layer(out_path, feature)
     write_mode = "a" if out_path.exists() else "w"
     gdf.to_file(out_path, driver="GPKG", layer=feature, mode=write_mode)

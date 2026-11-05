@@ -24,8 +24,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
-from common import find_raw, load_config   # noqa: E402
-from geopackage import layer_edit_state, manual_layers, vector_layers, open_elsewhere   # noqa: E402
+from common import find_raw, load_config, model_predicted   # noqa: E402
+from geopackage import (layer_edit_state, layer_origin, manual_layers, open_elsewhere,   # noqa: E402
+                        vector_layers)
 
 TICK, CROSS = "OK", "--"
 
@@ -146,6 +147,8 @@ def gather(sheet: str, cfg: dict, detail: bool = False) -> dict:
         "manual": sorted(set(manual_layers(gpkg)) | set(manual_layers(mended) if mended else [])),
         # per-layer edit state of data/outputs (hashes every layer, so only for the detailed report)
         "layer_states": ({l: layer_edit_state(gpkg, l) for l in vector_layers(gpkg)} if detail else {}),
+        "layer_origins": ({l: layer_origin(gpkg, l) for l in vector_layers(gpkg)} if detail else {}),
+        "model_made": ({l: model_predicted(cfg, sheet, l) for l in vector_layers(gpkg)} if detail else {}),
         "open_in": open_elsewhere(gpkg) if detail and gpkg.exists() else [],
         "feedback": feedback, "boundary_label": boundary_label,
     }
@@ -245,13 +248,27 @@ def print_report(s: dict) -> None:
         print(f"  (stitched)   {', '.join(sorted(s['stitched']))}")
 
     if s["layers"]:
-        # layer names, with how each vector layer stands: edited = changed since the toolkit
-        # wrote it (mended), untracked = no edit record, manual = imported hand-made layer
-        label = {"edited": "edited", "untracked": "untracked"}
-        shown = [f"{n} [manual]" if n in s["manual"] else
-                 (f"{n} [{label[s['layer_states'][n]]}]" if s["layer_states"].get(n) in label else n)
-                 for n in sorted(s["layers"])]
-        print(f"  05 vectorise {TICK}  {s['gpkg'].name}: {', '.join(shown)}")
+        # layer names, with how each vector layer stands. Origin (the layer's `source` field):
+        # manual = made by hand, semi_auto = model output you mend. State: edited = changed since
+        # the toolkit wrote it (mended), untracked = no edit record.
+        def tags(n: str) -> str:
+            t = []
+            origin = "manual" if n in s["manual"] else s["layer_origins"].get(n)
+            if origin in ("manual", "semi_auto"):
+                t.append(origin)
+            if s["layer_states"].get(n) in ("edited", "untracked"):
+                t.append(s["layer_states"][n])
+            return f"{n} [{', '.join(t)}]" if t else n
+        print(f"  05 vectorise {TICK}  {s['gpkg'].name}: {', '.join(tags(n) for n in sorted(s['layers']))}")
+        # layers with no origin tag and no edit record: say what they probably are
+        for n in sorted(s["layers"]):
+            if s["layer_origins"].get(n) == "untagged" and s["layer_states"].get(n) == "untracked":
+                if s["model_made"].get(n):
+                    print(f"     ! '{n}' has no origin tag - the model predicted it:  python run.py mark-manual "
+                          f"--sheet {sheet} --layers {n} --as semi_auto   (add --already-mended if you have corrected it)")
+                else:
+                    print(f"     ! '{n}' has no origin tag - drawn by hand in QGIS?  python run.py mark-manual "
+                          f"--sheet {sheet} --layers {n}")
     else:
         print(f"  05 vectorise {CROSS}  no {s['gpkg'].name}")
     if s["mended"]:

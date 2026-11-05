@@ -46,7 +46,7 @@ sys.path.insert(0, str(Path(__file__).parent))             # topology_repair
 
 from common import load_config, rel_to_root, resolve_output_gpkg   # noqa: E402
 from geopackage import (add_raster_layer, add_safety_flags, apply_safety_flags, announce_target,          # noqa: E402
-                        drop_vector_layer, stamp_layer, write_patch_grid)
+                        drop_vector_layer, stamp_layer, tag_semi_auto, write_patch_grid)
 from vectorise_common import stitch                                 # noqa: E402
 from topology_repair import repair_topology                         # noqa: E402
 
@@ -128,6 +128,7 @@ def vectorise(sheet_id: str, cfg: dict, stitched_path: Path, georef: dict,
         n_bridges = int(gdf["is_bridge"].sum())
         print(f"  {n_bridges} bridge segment(s) added")
 
+    gdf = tag_semi_auto(gdf)        # source = 'semi_auto': model output meant to be mended
     drop_vector_layer(out_path, "boundaries")
     write_mode = "a" if out_path.exists() else "w"
     gdf.to_file(out_path, driver="GPKG", layer="boundaries", mode=write_mode)

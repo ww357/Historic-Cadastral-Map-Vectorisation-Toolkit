@@ -59,6 +59,7 @@ COMMANDS: dict[str, tuple[str, str | None]] = {
     "vectorise-text":     ("steps/05_vectorise/text/vectorise.py",        "maptools"),
     "vectorise-parcels":  ("steps/05_vectorise/parcels/vectorise.py",     "polygons"),
     "import-manual":      ("steps/05_vectorise/manual/import_layers.py",  "maptools"),
+    "mark-manual":        ("steps/05_vectorise/manual/mark_manual.py",    "maptools"),
     # 06 feedback
     "prepare-lines":      ("steps/06_feedback/lines/prepare.py",          "maptools"),
     "feedback-lines":     ("steps/06_feedback/lines/train.py",            "lines"),
@@ -78,7 +79,7 @@ GROUPS = [
     ("04 predict",   ["predict-lines", "predict-dashed", "predict-polygons",
                       "predict-text", "predict-parcels"]),
     ("05 vectorise", ["vectorise-lines", "vectorise-dashed", "vectorise-polygons",
-                      "vectorise-text", "vectorise-parcels", "import-manual"]),
+                      "vectorise-text", "vectorise-parcels", "import-manual", "mark-manual"]),
     ("06 feedback",  ["prepare-lines", "feedback-lines",
                       "prepare-polygons", "feedback-polygons"]),
     ("utility",      ["fetch-weights", "status"]),

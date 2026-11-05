@@ -100,7 +100,12 @@ def add_raster_layer(stitched_path: Path, gpkg_path: Path, layer_name: str) -> N
 # it has no stamp (written before this tracking existed, or by another program) - which is
 # treated as possibly edited, because we cannot prove it is not.
 
+# Every vector layer carries a text field `source` saying where its features came from:
+#   "semi_auto" - model output meant to be mended (written by every vectorise step)
+#   "manual"    - made by hand (import-manual, or marked with mark-manual)
+# Underscore, not hyphen: it is safe in QGIS expressions/filters, SQL and the shell.
 MANUAL_TAG = "manual"
+SEMI_AUTO_TAG = "semi_auto"
 STATE_TABLE = "toolkit_layer_state"
 KEEP_BACKUPS = 5                      # newest backups kept per GeoPackage
 _flags = {"replace_manual": False, "replace_edited": False, "ignore_open": False}
@@ -161,6 +166,45 @@ def manual_layers(gpkg_path: Path) -> list[str]:
     return found
 
 
+def tag_semi_auto(gdf):
+    """Give every feature of a model-output layer source = 'semi_auto'. A column already called
+    'source' (e.g. from a joined attribute table) is kept as 'orig_source'."""
+    if "source" in gdf.columns:
+        gdf = gdf.rename(columns={"source": "orig_source"})
+    gdf = gdf.copy()
+    gdf["source"] = SEMI_AUTO_TAG
+    return gdf
+
+
+def layer_origin(gpkg_path: Path, layer: str) -> str:
+    """'manual' | 'semi_auto' | 'untagged', from the layer's `source` field ('manual' wins if
+    any feature says so; features you add by hand in QGIS have an empty source and do not count)."""
+    con = sqlite3.connect(gpkg_path, timeout=5)
+    try:
+        if "source" not in [r[1] for r in con.execute(f"PRAGMA table_info([{layer}])")]:
+            return "untagged"
+        vals = {r[0] for r in con.execute(f"SELECT DISTINCT source FROM [{layer}] WHERE source IS NOT NULL")}
+    except sqlite3.Error:
+        return "untagged"
+    finally:
+        con.close()
+    return MANUAL_TAG if MANUAL_TAG in vals else SEMI_AUTO_TAG if SEMI_AUTO_TAG in vals else "untagged"
+
+
+def layer_epsg(gpkg_path: Path, layer: str) -> int | None:
+    """EPSG code of a vector layer's CRS (None if undefined or not an EPSG code)."""
+    con = sqlite3.connect(gpkg_path, timeout=5)
+    try:
+        row = con.execute("SELECT s.organization, s.organization_coordsys_id FROM gpkg_geometry_columns g "
+                          "JOIN gpkg_spatial_ref_sys s ON s.srs_id = g.srs_id WHERE g.table_name = ?",
+                          (layer,)).fetchone()
+    except sqlite3.Error:
+        return None
+    finally:
+        con.close()
+    return int(row[1]) if row and str(row[0]).upper() == "EPSG" and int(row[1]) > 0 else None
+
+
 def _wkb_of(blob) -> bytes:
     """Geometry bytes without the GeoPackage header, so a re-encoded header (envelope, flags)
     is not mistaken for an edit."""
@@ -202,6 +246,22 @@ def stamp_layer(gpkg_path: Path, layer: str) -> None:
         con.commit()
     except sqlite3.Error as e:
         print(f"  Note: could not record the edit-tracking stamp for '{layer}' ({e})")
+    finally:
+        con.close()
+
+
+def declare_edited(gpkg_path: Path, layer: str) -> None:
+    """Record, on the user's word, that this layer has already been corrected (for layers mended
+    before edit tracking existed). A fingerprint that can never match makes it read as 'edited'
+    until the toolkit next writes the layer."""
+    con = sqlite3.connect(gpkg_path, timeout=10)
+    try:
+        con.execute(f"CREATE TABLE IF NOT EXISTS {STATE_TABLE} "
+                    "(layer TEXT PRIMARY KEY, written_at TEXT, fingerprint TEXT, n_features INTEGER)")
+        n = con.execute(f"SELECT count(*) FROM [{layer}]").fetchone()[0]
+        con.execute(f"INSERT OR REPLACE INTO {STATE_TABLE} VALUES (?, ?, ?, ?)",
+                    (layer, datetime.now().isoformat(timespec="seconds"), "declared-edited", n))
+        con.commit()
     finally:
         con.close()
 
@@ -332,8 +392,8 @@ def guard_write(out_path: Path, layers: list[str], *, manual_ok: bool = False) -
     if clash and not manual_ok and not _flags["replace_manual"]:
         sys.exit(
             f"Refusing to overwrite manual layer(s): {', '.join(clash)}\n"
-            f"  in {rel_to_root(out_path)}. They were imported from data/manual_layers/ (features tagged "
-            f"source='manual'), so they are your own work, not model output.\n"
+            f"  in {rel_to_root(out_path)}. Their features are tagged source='manual' (imported with "
+            f"import-manual or marked with mark-manual), so they are your own work, not model output.\n"
             f"  Pass --replace-manual to replace them with this step's output anyway.")
 
     reasons = {"edited": "edited since the toolkit wrote it (features added, deleted or moved)",

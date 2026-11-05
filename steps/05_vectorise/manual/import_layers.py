@@ -31,7 +31,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import difflib
 import re
 import sys
 from datetime import date
@@ -40,12 +39,12 @@ from pathlib import Path
 import geopandas as gpd
 import pyogrio
 import shapely
-import yaml
 from pyproj import CRS
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "steps"))   # shared helpers
-from common import load_config, manual_layers_dir, rel_to_root, resolve_output_gpkg   # noqa: E402
+from common import (classify_name, known_classes, load_config, manual_layers_dir,   # noqa: E402
+                    rel_to_root, resolve_output_gpkg)
 from geopackage import (MANUAL_TAG, add_safety_flags, apply_safety_flags, drop_vector_layer, guard_write,   # noqa: E402
                         layer_exists, manual_layers, stamp_layer, write_patch_grid)
 from vectorise_common import sheet_georef   # noqa: E402
@@ -56,7 +55,6 @@ IGNORE_SUFFIXES = {".dbf", ".shx", ".prj", ".cpg", ".qix", ".sbn", ".sbx", ".qpj
 RESERVED = {"patch_grid"}                                        # written by the toolkit itself
 ALIASES = {"boundary": "boundaries"}                             # same layer the model writes
 STANDARD_COLS = ["sheet_id", "feature", "source", "source_file", "imported"]
-NOT_CLASSES = {"labelme_json", "original_weights", "feedback"}   # folders that are not feature classes
 
 
 # -- Names -----------------------------------------------------------------------
@@ -66,38 +64,6 @@ def clean_name(stem: str) -> str:
     the toolkit's 'boundaries' layer."""
     name = re.sub(r"[^\w.-]+", "_", stem.strip()).strip("_")
     return ALIASES.get(name.lower(), name)
-
-
-def known_classes(cfg: dict) -> set[str]:
-    """Class names the toolkit already uses (annotations, predictions, MapSAM adapters, labelme)."""
-    names = {"boundaries", "dashed", "text", "parcels"}
-    for root in (ROOT / cfg["paths"]["annotations"], ROOT / cfg["paths"]["predictions"],
-                 ROOT / cfg["paths"]["models_base"] / "MapSAM"):
-        if root.is_dir():
-            names |= {d.name for d in root.iterdir() if d.is_dir()}
-    lm = ROOT / "steps" / "02_annotate" / "labelme_config.yaml"
-    if lm.exists():
-        names |= set(yaml.safe_load(lm.read_text()).get("labels") or [])
-    return names - NOT_CLASSES
-
-
-def _forms(s: str) -> set[str]:
-    s = re.sub(r"[^a-z0-9]", "", s.lower())
-    return {s} | ({s[:-1]} if s.endswith("s") else set()) | ({s[:-2]} if s.endswith("es") else set())
-
-
-def classify_name(name: str, classes: set[str]) -> tuple[str, str | None]:
-    """('existing'|'near'|'new', closest class). 'near' = same word in another spelling
-    (plural, case, small typo): it would become a separate class, so it is worth a look."""
-    if name in classes:
-        return "existing", name
-    for c in sorted(classes):
-        if c.lower() == name.lower() or _forms(c) & _forms(name):
-            return "near", c
-    close = difflib.get_close_matches(name.lower(), [c.lower() for c in classes], n=1, cutoff=0.8)
-    if close:
-        return "near", next(c for c in classes if c.lower() == close[0])
-    return "new", None
 
 
 # -- Reading ---------------------------------------------------------------------

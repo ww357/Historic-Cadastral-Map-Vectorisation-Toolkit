@@ -15,6 +15,8 @@ Import it by putting the steps/ directory on sys.path, e.g.:
 
 from __future__ import annotations
 
+import difflib
+import re
 import sys
 from pathlib import Path
 
@@ -77,6 +79,49 @@ def find_mask(mask_dir: Path, sheet_id: str) -> Path | None:
         if p.exists():
             return p
     return None
+
+
+
+# -- Class names -------------------------------------------------------------------
+
+NOT_CLASSES = {"labelme_json", "original_weights", "feedback"}   # folders that are not feature classes
+
+
+def known_classes(cfg: dict) -> set[str]:
+    """Class names the toolkit already uses (annotations, predictions, MapSAM adapters, labelme)."""
+    names = {"boundaries", "dashed", "text", "parcels"}
+    for root in (ROOT / cfg["paths"]["annotations"], ROOT / cfg["paths"]["predictions"],
+                 ROOT / cfg["paths"]["models_base"] / "MapSAM"):
+        if root.is_dir():
+            names |= {d.name for d in root.iterdir() if d.is_dir()}
+    lm = ROOT / "steps" / "02_annotate" / "labelme_config.yaml"
+    if lm.exists():
+        names |= set(yaml.safe_load(lm.read_text()).get("labels") or [])
+    return names - NOT_CLASSES
+
+
+def _forms(s: str) -> set[str]:
+    s = re.sub(r"[^a-z0-9]", "", s.lower())
+    return {s} | ({s[:-1]} if s.endswith("s") else set()) | ({s[:-2]} if s.endswith("es") else set())
+
+
+def classify_name(name: str, classes: set[str]) -> tuple[str, str | None]:
+    """('existing'|'near'|'new', closest class). 'near' = same word in another spelling
+    (plural, case, small typo): it would become a separate class, so it is worth a look."""
+    if name in classes:
+        return "existing", name
+    for c in sorted(classes):
+        if c.lower() == name.lower() or _forms(c) & _forms(name):
+            return "near", c
+    close = difflib.get_close_matches(name.lower(), [c.lower() for c in classes], n=1, cutoff=0.8)
+    if close:
+        return "near", next(c for c in classes if c.lower() == close[0])
+    return "new", None
+
+def model_predicted(cfg: dict, sheet_id: str, name: str) -> bool:
+    """True if a model step has produced predictions for this layer / class on this sheet."""
+    d = ROOT / cfg["paths"]["predictions"] / name / sheet_id
+    return d.is_dir() and any(d.iterdir())
 
 
 # -- GeoPackage target resolution (the --mended / --gpkg rule) ----------------
